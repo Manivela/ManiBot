@@ -67,7 +67,7 @@ client.on('voiceStateUpdate', (oldState, newState) => {
     const oldUserChannel = oldState.channel;
 
     if (oldUserChannel !== newUserChannel && newUserChannel !== null) {
-        const channelName = slugify(newUserChannel.name, { lower: true });
+        const channelName = `${slugify(newUserChannel.name, { lower: true })}-bot`;
         const foundChannel = newState.guild.channels.cache.find(channel => channel.type === 'GUILD_TEXT' && channel.name === channelName);
         if (foundChannel) {
             foundChannel.permissionOverwrites.create(newState.member, { 'VIEW_CHANNEL': true, 'SEND_MESSAGES': true, 'READ_MESSAGE_HISTORY': true })
@@ -98,7 +98,7 @@ client.on('voiceStateUpdate', (oldState, newState) => {
         }
     }
     if (newUserChannel !== oldUserChannel && oldUserChannel !== null) {
-        const channelName = slugify(oldUserChannel.name, { lower: true });
+        const channelName = `${slugify(oldUserChannel.name, { lower: true })}-bot`;
         const foundChannel = newState.guild.channels.cache.find(channel => channel.type === 'GUILD_TEXT' && channel.name === channelName);
         if (foundChannel) {
             if (oldUserChannel.members.size === 0) {
