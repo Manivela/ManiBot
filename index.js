@@ -65,11 +65,13 @@ client.on('presenceUpdate', (_oldPresence, newPresence) => {
 client.on('voiceStateUpdate', (oldState, newState) => {
     const newUserChannel = newState.channel;
     const oldUserChannel = oldState.channel;
-
-    if (oldUserChannel !== newUserChannel && newUserChannel !== null) {
+    if (oldUserChannel === newUserChannel) {
+        return;
+    }
+    if (newUserChannel !== null) {
         const channelName = `${slugify(newUserChannel.name, { lower: true })}-bot`;
         const foundChannel = newState.guild.channels.cache.find(channel => channel.type === 'GUILD_TEXT' && channel.name === channelName);
-        if (foundChannel && oldUserChannel.parentId === foundChannel.parentId) {
+        if (foundChannel && newUserChannel.parentId === foundChannel.parentId) {
             foundChannel.permissionOverwrites.create(newState.member, { 'VIEW_CHANNEL': true, 'SEND_MESSAGES': true, 'READ_MESSAGE_HISTORY': true })
                 .then(channel => console.log(`added "${newState.member.displayName}" to channel "${channel.name}"`))
                 .catch(e => console.log(`failed to add permissions for ${newState.member.displayName}: `, e));
@@ -97,7 +99,7 @@ client.on('voiceStateUpdate', (oldState, newState) => {
             }).catch(e => console.log(`failed to create channel ${channelName}: `, e));
         }
     }
-    if (newUserChannel !== oldUserChannel && oldUserChannel !== null) {
+    if (oldUserChannel !== null) {
         const channelName = `${slugify(oldUserChannel.name, { lower: true })}-bot`;
         const foundChannel = newState.guild.channels.cache.find(channel => channel.type === 'GUILD_TEXT' && channel.name === channelName);
         if (foundChannel && oldUserChannel.parentId === foundChannel.parentId) {
