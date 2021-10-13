@@ -18,6 +18,20 @@ client.on('ready', async () => {
 //         );
 //     }
 // });
+// clear ingame roles every 5 minutes
+setInterval(() => {
+    client.guilds.cache.map(guild => {
+        guild.members.cache.forEach(member => {
+            const role = member.roles.cache.find(r => r.name.includes('-ingame'));
+            if (!role) {
+                return;
+            }
+            if (!member.presence || !member.presence.activities.find(presence => presence.name === role.name.replace('-ingame', ''))) {
+                member.roles.remove(role);
+            }
+        });
+    });
+}, 300000);
 client.on('presenceUpdate', (oldPresence, newPresence) => {
     const member = oldPresence ? oldPresence.member : newPresence.member;
     if (!member.presence.activities || member.presence.activities.length == 0 || !member.presence.activities.some(a => !!a.applicationId)) {
