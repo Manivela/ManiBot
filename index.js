@@ -27,7 +27,9 @@ setInterval(() => {
                 return;
             }
             if (!member.presence || !member.presence.activities.find(presence => presence.name === role.name.replace('-ingame', ''))) {
-                member.roles.remove(role);
+                member.roles.remove(role).then(() => `stale role "${role.name}" removed from "${member.displayName}"`).catch(reason => {
+                    console.log(`failed to remove stale role "${role.name}" from "${member.name}"! reason: ${reason}`);
+                });
             }
         });
     });
@@ -97,12 +99,12 @@ client.on('presenceUpdate', (oldPresence, newPresence) => {
             }
             return;
         }
-        member.roles.remove(inGameRole).then(() => `role "${inGameRole.name}" added to "${member.displayName}"`).catch(reason => {
+        member.roles.remove(inGameRole).then(() => `role "${inGameRole.name}" removed from "${member.displayName}"`).catch(reason => {
             console.log(`failed to remove role "${inGameRole.name}" from "${member.name}"! reason: ${reason}`);
         });
     });
 });
-client.on('voiceStateUpdate', (oldState, newState) => {
+client.on('voiceStateUpdate', async (oldState, newState) => {
     const newUserChannel = newState.channel;
     const oldUserChannel = oldState.channel;
     if (oldUserChannel === newUserChannel) {
@@ -120,6 +122,11 @@ client.on('voiceStateUpdate', (oldState, newState) => {
             newUserChannel.parent.createChannel(channelName, {
                 type: 'GUILD_TEXT',
                 permissionOverwrites: [
+                    {
+                        // Watora
+                        id: '220644154177355777',
+                        allow: ['VIEW_CHANNEL', 'SEND_MESSAGES', 'READ_MESSAGE_HISTORY'],
+                    },
                     {
                         // Bot
                         id: client.user.id,
