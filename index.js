@@ -157,7 +157,8 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
                     .then(channel => console.log(`removed channel "${channel.name}"`))
                     .catch(e => console.log(`failed to delete channel ${channelName}: `, e));
             }
-            else {
+            // if not Watora
+            else if (newState.member.id !== '220644154177355777') {
                 foundChannel.permissionOverwrites
                     .delete(newState.member)
                     .then(channel => console.log(`removed "${newState.member.displayName}" from channel "${channel.name}"`))
