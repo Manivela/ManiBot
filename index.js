@@ -1,15 +1,45 @@
 require('dotenv').config();
 const { Client, Intents } = require('discord.js');
 const slugify = require('slugify');
+const axios = require('axios');
 
 const client = new Client({ intents: [Intents.FLAGS.GUILDS, Intents.FLAGS.GUILD_MESSAGES, Intents.FLAGS.GUILD_PRESENCES, Intents.FLAGS.GUILD_MEMBERS, Intents.FLAGS.GUILD_VOICE_STATES, Intents.FLAGS.GUILDS] });
 
-client.login(process.env.BOT_TOKEN);
 client.on('ready', async () => {
     await Promise.all(client.guilds.cache.map(async g => {
         return g.roles.fetch().then(roles => console.log(`fetched ${roles.size} roles for ${g.name}`));
     }));
     console.log('------------Bot is ready------------');
+});
+client.on('interactionCreate', async interaction => {
+    if (!interaction.isCommand()) return;
+
+    const { commandName } = interaction;
+
+    if (commandName === 'register') {
+        axios({
+            method: 'post',
+            url: `https://my.zerotier.com/api/v1/network/${process.env.ZERO_TIER_NETWORK}/member/${interaction.options.getString('address')}`,
+            headers: {
+                'Authorization': `Bearer ${process.env.ZERO_TIER_TOKEN}`,
+                'Content-Type': 'application/json',
+            },
+            data: JSON.stringify({
+                'name': `${interaction.user.username}`,
+                'description': 'Authenticated from discord',
+                'config': {
+                    'authorized': true,
+                },
+            }),
+        })
+            .then(async () => {
+                await interaction.reply({ content: 'Authorized!', ephemeral: true });
+            })
+            .catch(async (error) => {
+                console.log('error: ', error);
+                await interaction.reply({ content: 'An error occurred!', ephemeral: true });
+            });
+    }
 });
 // client.on('messageCreate', msg => {
 //     if (msg.content === 'marco') {
@@ -193,3 +223,4 @@ async function findRole(serverRoles, roleName) {
 function hasRole(member, roleName) {
     return member.roles.cache.some(role => role.name === roleName);
 }
+client.login(process.env.BOT_TOKEN);
