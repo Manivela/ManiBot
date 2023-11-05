@@ -1,6 +1,7 @@
 const { default: slugify } = require("slugify");
 const { findChannel } = require("../utils/channel");
 const { PermissionFlagsBits, ChannelType } = require("discord.js");
+const debug = require("debug")("voiceStateUpdate");
 
 const voiceStateUpdateHandler = async (oldState, newState, client) => {
   const newUserChannel = newState.channel;
@@ -21,12 +22,12 @@ const voiceStateUpdateHandler = async (oldState, newState, client) => {
           READ_MESSAGE_HISTORY: true,
         })
         .then((channel) =>
-          console.log(
+          debug(
             `added "${newState.member.displayName}" to channel "${channel.name}"`
           )
         )
         .catch((e) =>
-          console.log(
+          debug(
             `failed to add permissions for ${newState.member.displayName}: `,
             e
           )
@@ -63,13 +64,11 @@ const voiceStateUpdateHandler = async (oldState, newState, client) => {
           ],
         })
         .then((channel) => {
-          console.log(
+          debug(
             `created channel "${channel.name}" for member "${newState.member.displayName}"`
           );
         })
-        .catch((e) =>
-          console.log(`failed to create channel ${channelName}: `, e)
-        );
+        .catch((e) => debug(`failed to create channel ${channelName}: `, e));
     }
   }
   if (oldUserChannel !== null) {
@@ -77,26 +76,24 @@ const voiceStateUpdateHandler = async (oldState, newState, client) => {
       lower: true,
     })}-manibot`;
     const foundChannel = findChannel(newState.guild.channels, channelName);
-    console.log("foundChannel: ", foundChannel);
+    debug("foundChannel: ", foundChannel);
     if (foundChannel && oldUserChannel.parentId === foundChannel.parentId) {
       if (oldUserChannel.members.size === 0) {
         foundChannel
           .delete()
-          .then((channel) => console.log(`removed channel "${channel.name}"`))
-          .catch((e) =>
-            console.log(`failed to delete channel ${channelName}: `, e)
-          );
+          .then((channel) => debug(`removed channel "${channel.name}"`))
+          .catch((e) => debug(`failed to delete channel ${channelName}: `, e));
       }
 
       foundChannel.permissionOverwrites
         .delete(newState.member)
         .then((channel) =>
-          console.log(
+          debug(
             `removed "${newState.member.displayName}" from channel "${channel.name}"`
           )
         )
         .catch((e) =>
-          console.log(
+          debug(
             `failed to remove permissions for ${newState.member.displayName}: `,
             e
           )

@@ -2,6 +2,7 @@ require("dotenv").config();
 const { Client, GatewayIntentBits } = require("discord.js");
 const { presenceUpdateHandler } = require("./handlers/presenceUpdate");
 const { voiceStateUpdateHandler } = require("./handlers/voiceStateUpdate");
+const debug = require("debug")("main");
 
 const client = new Client({
   intents: [
@@ -20,9 +21,7 @@ client.on("ready", async () => {
     client.guilds.cache.map(async (g) => {
       return g.roles
         .fetch()
-        .then((roles) =>
-          console.log(`fetched ${roles.size} roles for ${g.name}`)
-        );
+        .then((roles) => debug(`fetched ${roles.size} roles for ${g.name}`));
     })
   );
   console.log("------------Bot is ready------------");
