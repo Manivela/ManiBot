@@ -1,3 +1,5 @@
+const debug = require("debug")("utils:role");
+
 async function findRole(serverRoles, roleName) {
   // search for role in cache
   let role = serverRoles.cache.find((r) => r.name === roleName);
@@ -7,7 +9,7 @@ async function findRole(serverRoles, roleName) {
       await serverRoles.fetch(); // Fetch all roles from the server to ensure the cache is up to date
       role = serverRoles.cache.find((r) => r.name === roleName); // Search again after fetching
       if (!role) {
-        console.log(`${roleName} not found on the server.`);
+        debug(`${roleName} not found on the server.`);
       }
     } catch (error) {
       console.error("Error while fetching roles:", error);
