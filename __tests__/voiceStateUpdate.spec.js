@@ -6,6 +6,7 @@ describe("Voice State Update Handler", () => {
     id: "everyoneRoleId",
   };
   const voiceChannel = {
+    parentId: "mock-parent-id",
     name: "General",
     parent: {
       children: { create: jest.fn(() => Promise.resolve(textChannel)) },
@@ -30,6 +31,7 @@ describe("Voice State Update Handler", () => {
     create: jest.fn(() => Promise.resolve(textChannel)),
   };
   const textChannel = {
+    parentId: "mock-parent-id",
     name: "general-manibot",
     type: ChannelType.GuildText,
     delete: jest.fn(() => Promise.resolve(textChannel)),
@@ -52,20 +54,65 @@ describe("Voice State Update Handler", () => {
       expect.objectContaining({
         name: textChannel.name,
         type: textChannel.type,
-      })
+      }),
     );
   });
+
   it("doesn't do anything if the member is still in the channel", async () => {
     const oldState = { guild, member, channel: voiceChannel };
     const newState = { guild, member, channel: voiceChannel };
     await voiceStateUpdateHandler(oldState, newState, client);
     expect(newState.channel.parent.children.create).not.toHaveBeenCalled();
   });
+
   it("removes the text channel when everyone leaves the voice channel", async () => {
     jest.replaceProperty(guild.channels, "cache", [textChannel]);
     const oldState = { guild, member, channel: voiceChannel };
     const newState = { guild, member, channel: null };
     await voiceStateUpdateHandler(oldState, newState, client);
     expect(textChannel.delete).toHaveBeenCalled();
+  });
+
+  it("adds people to the channel when they join the voice channel", async () => {
+    jest.replaceProperty(guild.channels, "cache", [voiceChannel, textChannel]);
+    jest.replaceProperty(voiceChannel.members, "size", 1);
+    const newMember = { id: "newMemberId", displayName: "NewMember" };
+
+    const oldState = { guild, member: newMember, channel: null };
+    const newState = { guild, member: newMember, channel: voiceChannel };
+
+    await voiceStateUpdateHandler(oldState, newState, client);
+
+    // Verify that the new member is added to the text channel's permission overwrites
+    expect(permissionOverwrites.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: newMember.id,
+        displayName: "NewMember",
+      }),
+      expect.objectContaining({
+        ViewChannel: true,
+        SendMessages: true,
+        ReadMessageHistory: true,
+      }),
+    );
+  });
+
+  it("removes people from the channel when they leave the voice channel", async () => {
+    jest.replaceProperty(guild.channels, "cache", [voiceChannel, textChannel]);
+    jest.replaceProperty(voiceChannel.members, "size", 1);
+    const newMember = { id: "newMemberId", displayName: "NewMember" };
+
+    const oldState = { guild, member: newMember, channel: voiceChannel };
+    const newState = { guild, member: newMember, channel: null };
+
+    await voiceStateUpdateHandler(oldState, newState, client);
+
+    // Verify that the new member is added to the text channel's permission overwrites
+    expect(permissionOverwrites.delete).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: newMember.id,
+        displayName: "NewMember",
+      }),
+    );
   });
 });
