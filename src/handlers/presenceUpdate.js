@@ -1,16 +1,22 @@
 const { hasRole, findRole } = require("../utils/role");
 const debug = require("debug")("presenceUpdate");
+const Sentry = require("@sentry/node");
 
 const presenceUpdateHandler = async (oldPresence, newPresence) => {
   const member = newPresence.member;
+  Sentry.setUser({
+    id: member.id,
+    username: member.displayName,
+    discordUsername: member?.user?.username,
+  });
 
   // Filter out the activities that are no longer present
   const stoppedActivities = oldPresence
     ? oldPresence.activities.filter(
         (oldActivity) =>
           !newPresence.activities.find(
-            (newActivity) => newActivity.id === oldActivity.id
-          )
+            (newActivity) => newActivity.id === oldActivity.id,
+          ),
       )
     : [];
 
@@ -26,12 +32,12 @@ const presenceUpdateHandler = async (oldPresence, newPresence) => {
     if (activity.applicationId && !hasRole(member, `${activity.name}-ingame`)) {
       const inGameRole = await findRole(
         newPresence.guild.roles,
-        `${activity.name}-ingame`
+        `${activity.name}-ingame`,
       );
       if (inGameRole) {
         await member.roles.add(inGameRole);
         debug(
-          `In-game role "${inGameRole.name}" added to "${member.displayName}".`
+          `In-game role "${inGameRole.name}" added to "${member.displayName}".`,
         );
       }
     }
@@ -42,12 +48,12 @@ const presenceUpdateHandler = async (oldPresence, newPresence) => {
     if (activity.applicationId && hasRole(member, `${activity.name}-ingame`)) {
       const inGameRole = await findRole(
         newPresence.guild.roles,
-        `${activity.name}-ingame`
+        `${activity.name}-ingame`,
       );
       if (inGameRole) {
         await member.roles.remove(inGameRole);
         debug(
-          `In-game role "${inGameRole.name}" removed from "${member.displayName}".`
+          `In-game role "${inGameRole.name}" removed from "${member.displayName}".`,
         );
       }
     }
@@ -62,14 +68,14 @@ const presenceUpdateHandler = async (oldPresence, newPresence) => {
     (role) =>
       role.name.endsWith("-ingame") &&
       !currentActivitiesNames.some(
-        (activityName) => role.name === `${activityName}-ingame`
-      )
+        (activityName) => role.name === `${activityName}-ingame`,
+      ),
   );
 
   for (const role of rolesToRemove.values()) {
     await member.roles.remove(role);
     debug(
-      `Leftover in-game role "${role.name}" removed from "${member.displayName}".`
+      `Leftover in-game role "${role.name}" removed from "${member.displayName}".`,
     );
   }
 };

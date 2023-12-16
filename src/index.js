@@ -3,6 +3,21 @@ const { Client, GatewayIntentBits } = require("discord.js");
 const { presenceUpdateHandler } = require("./handlers/presenceUpdate");
 const { voiceStateUpdateHandler } = require("./handlers/voiceStateUpdate");
 const debug = require("debug")("main");
+const Sentry = require("@sentry/node");
+
+Sentry.init({
+  dsn: process.env.SENTRY_DSN,
+  beforeSend: (event, hint) => {
+    if (process.env.NODE_ENV !== "production") {
+      console.error(
+        event.breadcrumbs.at(-1).message || "",
+        hint.originalException,
+      );
+      return;
+    }
+    return event;
+  },
+});
 
 const client = new Client({
   intents: [
@@ -22,7 +37,7 @@ client.on("ready", async () => {
       return g.roles
         .fetch()
         .then((roles) => debug(`fetched ${roles.size} roles for ${g.name}`));
-    })
+    }),
   );
   console.log("------------Bot is ready------------");
 });
@@ -35,8 +50,8 @@ client.on("messageCreate", (msg) => {
 
 client.on("presenceUpdate", presenceUpdateHandler);
 
-client.on("voiceStateUpdate", (oldState, newState) =>
-  voiceStateUpdateHandler(oldState, newState, client)
-);
+client.on("voiceStateUpdate", (oldState, newState) => {
+  voiceStateUpdateHandler(oldState, newState, client);
+});
 
 client.login(process.env.BOT_TOKEN);

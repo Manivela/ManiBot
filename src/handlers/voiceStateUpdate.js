@@ -2,6 +2,7 @@ const { default: slugify } = require("slugify");
 const { findChannel } = require("../utils/channel");
 const { PermissionFlagsBits, ChannelType } = require("discord.js");
 const debug = require("debug")("voiceStateUpdate");
+const Sentry = require("@sentry/node");
 
 const voiceStateUpdateHandler = async (oldState, newState, client) => {
   const newUserChannel = newState.channel;
@@ -9,6 +10,11 @@ const voiceStateUpdateHandler = async (oldState, newState, client) => {
   if (oldUserChannel === newUserChannel) {
     return;
   }
+  Sentry.setUser({
+    id: newState.member.id,
+    username: newState.member.displayName,
+    discordUsername: newState.member?.user?.username,
+  });
   if (newUserChannel !== null) {
     const channelName = `${slugify(newUserChannel.name, {
       lower: true,
@@ -27,10 +33,14 @@ const voiceStateUpdateHandler = async (oldState, newState, client) => {
           ),
         )
         .catch((e) =>
-          console.error(
-            `failed to add permissions for ${newState.member.displayName}: `,
-            e,
-          ),
+          Sentry.captureException(e, (scope) => {
+            scope.addBreadcrumb({
+              level: "error",
+              type: "debug",
+              category: "console",
+              message: `failed to add permissions for ${newState.member.displayName}: `,
+            });
+          }),
         );
     } else {
       newUserChannel.parent.children
@@ -69,7 +79,14 @@ const voiceStateUpdateHandler = async (oldState, newState, client) => {
           );
         })
         .catch((e) =>
-          console.error(`failed to create channel ${channelName}: `, e),
+          Sentry.captureException(e, (scope) => {
+            scope.addBreadcrumb({
+              level: "error",
+              type: "debug",
+              category: "console",
+              message: `failed to create channel ${channelName}: `,
+            });
+          }),
         );
     }
   }
@@ -85,7 +102,14 @@ const voiceStateUpdateHandler = async (oldState, newState, client) => {
           .delete()
           .then((channel) => debug(`removed channel "${channel.name}"`))
           .catch((e) =>
-            console.error(`failed to delete channel ${channelName}: `, e),
+            Sentry.captureException(e, (scope) => {
+              scope.addBreadcrumb({
+                level: "error",
+                type: "debug",
+                category: "console",
+                message: `failed to delete channel ${channelName}: `,
+              });
+            }),
           );
       } else {
         foundChannel.permissionOverwrites
@@ -96,10 +120,14 @@ const voiceStateUpdateHandler = async (oldState, newState, client) => {
             ),
           )
           .catch((e) =>
-            console.error(
-              `failed to remove permissions for ${newState.member.displayName}: `,
-              e,
-            ),
+            Sentry.captureException(e, (scope) => {
+              scope.addBreadcrumb({
+                level: "error",
+                type: "debug",
+                category: "console",
+                message: `failed to remove permissions for ${newState.member.displayName}: `,
+              });
+            }),
           );
       }
     }
