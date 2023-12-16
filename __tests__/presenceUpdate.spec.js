@@ -97,6 +97,7 @@ describe("Presence Update Handler", () => {
     expect(member.roles.add).not.toHaveBeenCalled();
   });
   it("shouldn't crash if it fails to fetch roles", async () => {
+    jest.spyOn(console, "error").mockImplementation(() => {});
     jest.spyOn(guild.roles, "fetch").mockImplementation(() => {
       throw "Mock error";
     });
@@ -109,6 +110,7 @@ describe("Presence Update Handler", () => {
       await presenceUpdateHandler(null, newPresence);
     } catch (error) {
       expect(error).toBeUndefined();
+      expect(console.error).toHaveBeenCalled();
     }
   });
 });
