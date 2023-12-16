@@ -2,9 +2,12 @@ version: 2.1
 
 orbs:
   node: circleci/node@5.1.1
+  codecov: codecov/codecov@3.3.0
 
 workflows:
   test:
     jobs:
       - node/test:
           test-results-for: jest
+          post-steps:
+            - codecov/upload
