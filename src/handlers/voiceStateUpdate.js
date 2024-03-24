@@ -95,7 +95,7 @@ const voiceStateUpdateHandler = async (oldState, newState, client) => {
       lower: true,
     })}-manibot`;
     const foundChannel = findChannel(newState.guild.channels, channelName);
-    debug("foundChannel: ", foundChannel);
+    debug(`found channel ${foundChannel.name}`);
     if (foundChannel && oldUserChannel.parentId === foundChannel.parentId) {
       if (oldUserChannel.members.size === 0) {
         foundChannel
