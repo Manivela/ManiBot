@@ -1,7 +1,7 @@
 require("dotenv").config();
 const { Client, GatewayIntentBits } = require("discord.js");
 const { presenceUpdateHandler } = require("./handlers/presenceUpdate");
-const { voiceStateUpdateHandler } = require("./handlers/voiceStateUpdate");
+// const { voiceStateUpdateHandler } = require("./handlers/voiceStateUpdate");
 const debug = require("debug")("main");
 const Sentry = require("@sentry/node");
 
@@ -50,8 +50,8 @@ client.on("messageCreate", (msg) => {
 
 client.on("presenceUpdate", presenceUpdateHandler);
 
-client.on("voiceStateUpdate", (oldState, newState) => {
-  voiceStateUpdateHandler(oldState, newState, client);
-});
+// client.on("voiceStateUpdate", (oldState, newState) => {
+//   voiceStateUpdateHandler(oldState, newState, client);
+// });
 
 client.login(process.env.BOT_TOKEN);
