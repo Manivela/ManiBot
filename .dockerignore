@@ -1,2 +1,12 @@
+__tests__
+.circleci
 .env
 node_modules
+.git
+.gitignore
+.nvmrc
+Dockerfile
+fly.toml
+jest.config.js
+README.md
+sample.env
