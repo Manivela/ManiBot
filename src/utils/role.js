@@ -1,24 +1,41 @@
 const debug = require("debug")("utils:role");
+const Sentry = require("@sentry/node");
 
 async function findRole(serverRoles, roleName) {
-  // search for role in cache
+  if (!roleName) {
+    debug("No role name provided");
+    return null;
+  }
+
   let role = serverRoles.cache.find((r) => r.name === roleName);
+
   if (!role) {
-    // fetch new roles from the server
     try {
-      await serverRoles.fetch(); // Fetch all roles from the server to ensure the cache is up to date
-      role = serverRoles.cache.find((r) => r.name === roleName); // Search again after fetching
+      await serverRoles.fetch();
+      role = serverRoles.cache.find((r) => r.name === roleName);
+
       if (!role) {
         debug(`${roleName} not found on the server.`);
       }
     } catch (error) {
-      console.error("Error while fetching roles:", error);
+      Sentry.captureException(error, (scope) => {
+        scope.addBreadcrumb({
+          level: "error",
+          type: "debug",
+          category: "roles",
+          message: `Error fetching role ${roleName}`,
+        });
+      });
+      debug(`Error while fetching roles: ${error.message}`);
     }
   }
+
   return role;
 }
 
 function hasRole(member, roleName) {
+  if (!member || !member.roles || !roleName) return false;
   return member.roles.cache.some((role) => role.name === roleName);
 }
+
 module.exports = { findRole, hasRole };
