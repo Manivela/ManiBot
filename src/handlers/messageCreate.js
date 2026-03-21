@@ -1,6 +1,22 @@
 const debug = require("debug")("messageCreate");
+const { version } = require("../../package.json");
 
 const DEFAULT_PREFIX = process.env.COMMAND_PREFIX || "!";
+
+const buildVersionMessage = () => {
+  const releaseId = process.env.FLY_RELEASE_ID || process.env.RELEASE_VERSION;
+  const gitSha = process.env.GIT_SHA;
+
+  const details = [`Version: ${version}`];
+  if (releaseId) {
+    details.push(`Release: ${releaseId}`);
+  }
+  if (gitSha) {
+    details.push(`Commit: ${gitSha}`);
+  }
+
+  return details.join("\n");
+};
 
 const buildQueueMessage = (queue) => {
   const entries = [];
@@ -213,8 +229,14 @@ const createMessageCreateHandler = ({
               `${prefix}resume`,
               `${prefix}queue`,
               `${prefix}nowplaying`,
+              `${prefix}version`,
             ].join("\n"),
           );
+          return;
+        }
+
+        case "version": {
+          await msg.channel.send(buildVersionMessage());
           return;
         }
 
@@ -231,6 +253,7 @@ const createMessageCreateHandler = ({
 };
 
 module.exports = {
+  buildVersionMessage,
   buildQueueMessage,
   createMessageCreateHandler,
 };

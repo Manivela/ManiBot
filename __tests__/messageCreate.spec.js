@@ -1,5 +1,6 @@
 const {
   buildQueueMessage,
+  buildVersionMessage,
   createMessageCreateHandler,
 } = require("../src/handlers/messageCreate");
 
@@ -111,5 +112,27 @@ describe("Message Create Handler", () => {
 
     expect(message).toContain("Now playing");
     expect(message).toContain("Next Song");
+  });
+
+  it("returns the bot version", async () => {
+    const musicPlayer = { getQueue: jest.fn() };
+    const handler = createMessageCreateHandler({ musicPlayer });
+    const msg = createMessage({ content: "!version" });
+
+    await handler(msg);
+
+    expect(msg.channel.send).toHaveBeenCalledWith(buildVersionMessage());
+  });
+
+  it("lists version in help output", async () => {
+    const musicPlayer = { getQueue: jest.fn() };
+    const handler = createMessageCreateHandler({ musicPlayer });
+    const msg = createMessage({ content: "!help" });
+
+    await handler(msg);
+
+    expect(msg.channel.send).toHaveBeenCalledWith(
+      expect.stringContaining("!version"),
+    );
   });
 });
