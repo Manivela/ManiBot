@@ -1,19 +1,65 @@
 const debug = require("debug")("messageCreate");
+const { createHash } = require("crypto");
+const { existsSync, readFileSync } = require("fs");
+const { join } = require("path");
 const { version } = require("../../package.json");
 
 const DEFAULT_PREFIX = process.env.COMMAND_PREFIX || "!";
 
+const BUILD_FINGERPRINT_FILES = [
+  "package-lock.json",
+  "src/index.js",
+  "src/handlers/messageCreate.js",
+  "src/music/player.js",
+];
+
+const resolveBuildFingerprint = () => {
+  if (process.env.BUILD_FINGERPRINT) {
+    return process.env.BUILD_FINGERPRINT;
+  }
+
+  const rootDir = join(__dirname, "..", "..");
+  const hash = createHash("sha256");
+  let usedFiles = 0;
+
+  for (const relativePath of BUILD_FINGERPRINT_FILES) {
+    const filePath = join(rootDir, relativePath);
+    if (!existsSync(filePath)) {
+      continue;
+    }
+
+    hash.update(readFileSync(filePath));
+    usedFiles += 1;
+  }
+
+  if (usedFiles === 0) {
+    return "unknown";
+  }
+
+  return hash.digest("hex").slice(0, 12);
+};
+
+const BUILD_FINGERPRINT = resolveBuildFingerprint();
+
 const buildVersionMessage = () => {
   const releaseId = process.env.FLY_RELEASE_ID || process.env.RELEASE_VERSION;
-  const gitSha = process.env.GIT_SHA;
+  const gitSha =
+    process.env.GIT_SHA ||
+    process.env.SOURCE_VERSION ||
+    process.env.CIRCLE_SHA1;
+  const machineId = process.env.FLY_MACHINE_ID || process.env.HOSTNAME;
 
   const details = [`Version: ${version}`];
   if (releaseId) {
     details.push(`Release: ${releaseId}`);
   }
   if (gitSha) {
-    details.push(`Commit: ${gitSha}`);
+    details.push(`Commit: ${gitSha.slice(0, 12)}`);
   }
+  if (machineId) {
+    details.push(`Instance: ${machineId}`);
+  }
+  details.push(`Build: ${BUILD_FINGERPRINT}`);
 
   return details.join("\n");
 };

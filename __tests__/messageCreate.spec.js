@@ -124,6 +124,13 @@ describe("Message Create Handler", () => {
     expect(msg.channel.send).toHaveBeenCalledWith(buildVersionMessage());
   });
 
+  it("includes build fingerprint in version output", () => {
+    const message = buildVersionMessage();
+
+    expect(message).toContain("Version:");
+    expect(message).toContain("Build:");
+  });
+
   it("lists version in help output", async () => {
     const musicPlayer = { getQueue: jest.fn() };
     const handler = createMessageCreateHandler({ musicPlayer });
