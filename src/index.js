@@ -1,9 +1,11 @@
 require("dotenv").config();
 const { Client, GatewayIntentBits } = require("discord.js");
 const { presenceUpdateHandler } = require("./handlers/presenceUpdate");
+const { createMessageCreateHandler } = require("./handlers/messageCreate");
 // const { voiceStateUpdateHandler } = require("./handlers/voiceStateUpdate");
 const debug = require("debug")("main");
 const Sentry = require("@sentry/node");
+const musicPlayer = require("./music/player");
 
 Sentry.init({
   dsn: process.env.SENTRY_DSN,
@@ -42,11 +44,7 @@ client.on("ready", async () => {
   console.log("------------Bot is ready------------");
 });
 
-client.on("messageCreate", (msg) => {
-  if (msg.content === "ping") {
-    msg.channel.send("pong");
-  }
-});
+client.on("messageCreate", createMessageCreateHandler({ musicPlayer }));
 
 client.on("presenceUpdate", presenceUpdateHandler);
 
