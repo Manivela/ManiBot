@@ -197,6 +197,42 @@ describe("music player", () => {
     );
   });
 
+  it("persists guild volume preference across playback sessions", async () => {
+    const player = loadPlayer();
+    const { guild, textChannel, voiceChannel } = createFixtures();
+
+    expect(player.setVolume(guild.id, 0.7)).toBe(70);
+    expect(player.getVolume(guild.id)).toBe(70);
+
+    await player.enqueue({
+      guild,
+      query: "test",
+      requestedBy: "tester",
+      textChannel,
+      voiceChannel,
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    const queue = player.getQueue(guild.id);
+    expect(queue.volume).toBe(0.7);
+
+    player.stop(guild.id);
+    expect(player.getVolume(guild.id)).toBe(70);
+
+    await player.enqueue({
+      guild,
+      query: "test",
+      requestedBy: "tester",
+      textChannel,
+      voiceChannel,
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(player.getQueue(guild.id).volume).toBe(0.7);
+
+    player.cleanupQueue(guild.id);
+  });
+
   it("rejects enqueue when switching to a different voice channel", async () => {
     const player = loadPlayer();
     const fixtureA = createFixtures("voice-1");

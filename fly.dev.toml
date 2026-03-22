@@ -5,3 +5,8 @@ app = "manibot-dev"
 primary_region = "ams"
 
 [build]
+
+[vm]
+	cpu_kind = "shared"
+	cpus = 1
+	memory = "512mb"

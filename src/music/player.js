@@ -228,9 +228,13 @@ const streamWithYtDlp = (url) =>
   });
 
 const guildQueues = new Map();
-const DEFAULT_VOLUME = 1;
+const guildVolumePreferences = new Map();
+const DEFAULT_VOLUME = 0.5;
 const MIN_VOLUME = 0;
 const MAX_VOLUME = 2;
+
+const getPreferredVolume = (guildId) =>
+  guildVolumePreferences.get(guildId) ?? DEFAULT_VOLUME;
 
 const formatDuration = (durationRaw) => {
   if (!durationRaw) {
@@ -432,7 +436,7 @@ const createQueue = ({ guildId, textChannel, voiceChannelId }) => {
     lastResource: null,
     textChannel,
     tracks: [],
-    volume: DEFAULT_VOLUME,
+    volume: getPreferredVolume(guildId),
     voiceChannelId,
   };
 
@@ -678,24 +682,24 @@ const setVolume = (guildId, volume) => {
     throw new Error("Volume must be between 0 and 200.");
   }
 
-  const queue = getQueue(guildId);
-  if (!queue) {
-    throw new Error("Nothing is playing right now.");
-  }
+  guildVolumePreferences.set(guildId, volume);
 
-  queue.volume = volume;
-  queue.lastResource?.volume?.setVolume(volume);
+  const queue = getQueue(guildId);
+  if (queue) {
+    queue.volume = volume;
+    queue.lastResource?.volume?.setVolume(volume);
+  }
 
   return Math.round(volume * 100);
 };
 
 const getVolume = (guildId) => {
   const queue = getQueue(guildId);
-  if (!queue) {
-    return 100;
+  if (queue) {
+    return Math.round(queue.volume * 100);
   }
 
-  return Math.round(queue.volume * 100);
+  return Math.round(getPreferredVolume(guildId) * 100);
 };
 
 module.exports = {
