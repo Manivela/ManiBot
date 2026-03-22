@@ -49,6 +49,7 @@ describe("Message Create Handler", () => {
     const musicPlayer = {
       enqueue: jest.fn(() =>
         Promise.resolve({
+          started: true,
           tracks: [queueTrack],
           tracksAdded: 1,
         }),
@@ -90,6 +91,23 @@ describe("Message Create Handler", () => {
     );
   });
 
+  it("maps aborted playback errors to a retry message", async () => {
+    const musicPlayer = {
+      enqueue: jest.fn(() =>
+        Promise.reject(new Error("The operation was aborted")),
+      ),
+      getQueue: jest.fn(() => null),
+    };
+    const handler = createMessageCreateHandler({ musicPlayer });
+    const msg = createMessage({ content: "!play test" });
+
+    await handler(msg);
+
+    expect(msg.channel.send).toHaveBeenCalledWith(
+      "Playback request was interrupted. Please try !play again.",
+    );
+  });
+
   it("skips the current song when the caller is in the active channel", async () => {
     const musicPlayer = {
       getQueue: jest.fn(() => ({ voiceChannelId: "voice-1" })),
@@ -102,6 +120,46 @@ describe("Message Create Handler", () => {
 
     expect(musicPlayer.skip).toHaveBeenCalledWith("guild-1");
     expect(msg.channel.send).toHaveBeenCalledWith("Skipped **Test Song**.");
+  });
+
+  it("shows current volume", async () => {
+    const musicPlayer = {
+      getQueue: jest.fn(() => ({ voiceChannelId: "voice-1" })),
+      getVolume: jest.fn(() => 75),
+    };
+    const handler = createMessageCreateHandler({ musicPlayer });
+    const msg = createMessage({ content: "!volume" });
+
+    await handler(msg);
+
+    expect(musicPlayer.getVolume).toHaveBeenCalledWith("guild-1");
+    expect(msg.channel.send).toHaveBeenCalledWith("Current volume: **75%**.");
+  });
+
+  it("sets volume", async () => {
+    const musicPlayer = {
+      getQueue: jest.fn(() => ({ voiceChannelId: "voice-1" })),
+      setVolume: jest.fn(() => 120),
+    };
+    const handler = createMessageCreateHandler({ musicPlayer });
+    const msg = createMessage({ content: "!volume 120" });
+
+    await handler(msg);
+
+    expect(musicPlayer.setVolume).toHaveBeenCalledWith("guild-1", 1.2);
+    expect(msg.channel.send).toHaveBeenCalledWith("Volume set to **120%**.");
+  });
+
+  it("shows volume usage for invalid values", async () => {
+    const musicPlayer = {
+      getQueue: jest.fn(() => ({ voiceChannelId: "voice-1" })),
+    };
+    const handler = createMessageCreateHandler({ musicPlayer });
+    const msg = createMessage({ content: "!volume loud" });
+
+    await handler(msg);
+
+    expect(msg.channel.send).toHaveBeenCalledWith("Usage: !volume <0-200>");
   });
 
   it("renders the queue summary", () => {
@@ -131,13 +189,19 @@ describe("Message Create Handler", () => {
     expect(message).toContain("Build:");
   });
 
-  it("lists version in help output", async () => {
+  it("lists commands in !commands output", async () => {
     const musicPlayer = { getQueue: jest.fn() };
     const handler = createMessageCreateHandler({ musicPlayer });
-    const msg = createMessage({ content: "!help" });
+    const msg = createMessage({ content: "!commands" });
 
     await handler(msg);
 
+    expect(msg.channel.send).toHaveBeenCalledWith(
+      expect.stringContaining("!play"),
+    );
+    expect(msg.channel.send).toHaveBeenCalledWith(
+      expect.stringContaining("!volume <0-200>"),
+    );
     expect(msg.channel.send).toHaveBeenCalledWith(
       expect.stringContaining("!version"),
     );

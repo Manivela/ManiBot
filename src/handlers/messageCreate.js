@@ -128,6 +128,28 @@ const ensureCanControlQueue = async (msg, queue) => {
   return Boolean(await ensureSameVoiceChannel(msg, queue));
 };
 
+const getUserFacingErrorMessage = (error) => {
+  const errorMessage = error?.message || "";
+  if (
+    error?.name === "AbortError" ||
+    /operation was aborted/i.test(errorMessage)
+  ) {
+    return "Playback request was interrupted. Please try !play again.";
+  }
+
+  if (
+    /Cannot find module '@discordjs\/opus'|Cannot find module 'node-opus'|Cannot find module 'opusscript'/i.test(
+      errorMessage,
+    )
+  ) {
+    return "Missing Opus dependency. Install `opusscript` and restart the bot.";
+  }
+
+  return (
+    errorMessage.split("\n")[0] || "Music playback failed. Please try again."
+  );
+};
+
 const createMessageCreateHandler = ({
   musicPlayer,
   prefix = DEFAULT_PREFIX,
@@ -183,9 +205,11 @@ const createMessageCreateHandler = ({
           });
 
           if (result.tracksAdded === 1) {
-            await msg.channel.send(
-              `Queued **${result.tracks[0].title}** (${result.tracks[0].durationLabel}).`,
-            );
+            if (result.started) {
+              await msg.channel.send(
+                `Queued **${result.tracks[0].title}** (${result.tracks[0].durationLabel}).`,
+              );
+            }
             return;
           }
 
@@ -241,6 +265,33 @@ const createMessageCreateHandler = ({
           return;
         }
 
+        case "volume": {
+          const queue = musicPlayer.getQueue(msg.guild.id);
+          const canControlQueue = await ensureCanControlQueue(msg, queue);
+          if (!canControlQueue) {
+            return;
+          }
+
+          if (!args.length) {
+            const currentVolume = musicPlayer.getVolume(msg.guild.id);
+            await msg.channel.send(`Current volume: **${currentVolume}%**.`);
+            return;
+          }
+
+          const value = Number(args[0]);
+          if (!Number.isFinite(value)) {
+            await msg.channel.send(`Usage: ${prefix}volume <0-200>`);
+            return;
+          }
+
+          const volumePercent = musicPlayer.setVolume(
+            msg.guild.id,
+            value / 100,
+          );
+          await msg.channel.send(`Volume set to **${volumePercent}%**.`);
+          return;
+        }
+
         case "queue": {
           const queue = musicPlayer.getQueue(msg.guild.id);
           await msg.channel.send(
@@ -263,19 +314,27 @@ const createMessageCreateHandler = ({
           return;
         }
 
-        case "music":
+        case "commands":
         case "help": {
           await msg.channel.send(
             [
-              `Music commands with prefix \`${prefix}\`:`,
+              "Commands:",
+              "",
+              "General:",
+              "ping",
+              `${prefix}commands (${prefix}help)`,
+              `${prefix}version`,
+              "",
+              "Music:",
               `${prefix}play <youtube url or search>`,
               `${prefix}skip`,
               `${prefix}stop`,
               `${prefix}pause`,
               `${prefix}resume`,
+              `${prefix}volume <0-200>`,
               `${prefix}queue`,
               `${prefix}nowplaying`,
-              `${prefix}version`,
+              `${prefix}np`,
             ].join("\n"),
           );
           return;
@@ -291,9 +350,7 @@ const createMessageCreateHandler = ({
       }
     } catch (error) {
       debug(error);
-      await msg.channel.send(
-        error?.message || "Music playback failed. Please try again.",
-      );
+      await msg.channel.send(getUserFacingErrorMessage(error));
     }
   };
 };

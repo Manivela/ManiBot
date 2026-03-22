@@ -1,0 +1,7 @@
+# fly.dev.toml app configuration for development deployment
+# Usage: flyctl deploy -c fly.dev.toml
+
+app = "manibot-dev"
+primary_region = "ams"
+
+[build]
