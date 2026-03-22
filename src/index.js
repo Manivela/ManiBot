@@ -1,11 +1,15 @@
 require("dotenv").config();
+const dns = require("node:dns");
 const { Client, GatewayIntentBits } = require("discord.js");
 const { presenceUpdateHandler } = require("./handlers/presenceUpdate");
 const { createMessageCreateHandler } = require("./handlers/messageCreate");
 // const { voiceStateUpdateHandler } = require("./handlers/voiceStateUpdate");
 const debug = require("debug")("main");
+const voiceGatewayDebug = require("debug")("voiceGateway");
 const Sentry = require("@sentry/node");
 const musicPlayer = require("./music/player");
+
+dns.setDefaultResultOrder("ipv4first");
 
 Sentry.init({
   dsn: process.env.SENTRY_DSN,
@@ -33,7 +37,7 @@ const client = new Client({
   ],
 });
 
-client.on("ready", async () => {
+client.on("clientReady", async () => {
   await Promise.all(
     client.guilds.cache.map(async (g) => {
       return g.roles
@@ -47,6 +51,17 @@ client.on("ready", async () => {
 client.on("messageCreate", createMessageCreateHandler({ musicPlayer }));
 
 client.on("presenceUpdate", presenceUpdateHandler);
+
+client.on("raw", (packet) => {
+  if (packet.t !== "VOICE_SERVER_UPDATE" && packet.t !== "VOICE_STATE_UPDATE") {
+    return;
+  }
+
+  const data = packet.d || {};
+  voiceGatewayDebug(
+    `${packet.t} guild=${data.guild_id || "unknown"} channel=${data.channel_id || "null"} user=${data.user_id || "unknown"} session=${data.session_id ? "present" : "missing"}`,
+  );
+});
 
 // client.on("voiceStateUpdate", (oldState, newState) => {
 //   voiceStateUpdateHandler(oldState, newState, client);

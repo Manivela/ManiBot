@@ -6,6 +6,9 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "nodemon src/index.js",
+    "deploy:fly": "flyctl deploy -c fly.toml",
+    "deploy:fly:dev": "flyctl deploy -c fly.dev.toml",
+    "logs:fly:dev": "flyctl logs -a manibot-dev",
     "test": "jest",
     "test:watch": "jest --watchAll"
   },
@@ -13,11 +16,12 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@discordjs/voice": "^0.18.0",
+    "@discordjs/voice": "^0.19.2",
     "@sentry/node": "^7.88.0",
     "debug": "^4.3.4",
     "discord.js": "^14.25.1",
     "dotenv": "^16.3.1",
+    "opusscript": "^0.0.8",
     "play-dl": "^1.9.7",
     "slugify": "^1.6.6",
     "tweetnacl": "^1.0.3"
