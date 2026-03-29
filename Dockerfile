@@ -31,9 +31,8 @@ COPY --link . .
 # Final stage for app image
 FROM base
 
-# Pin a release tag — the literal "latest" URL never changes, so Docker layer cache
-# can keep an old yt-dlp binary across many `fly deploy`s. Bump YTDLP_VERSION when
-# YouTube playback breaks or to pick up fixes (see https://github.com/yt-dlp/yt-dlp/releases).
+# Bootstrap yt-dlp (fallback if startup upgrade fails). docker-entrypoint.sh upgrades
+# to GitHub latest on each machine start when the version differs.
 ARG YTDLP_VERSION=2026.03.17
 
 RUN apt-get update -qq && \
@@ -44,8 +43,12 @@ RUN apt-get update -qq && \
     yt-dlp --version && \
     rm -rf /var/lib/apt/lists/*
 
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN sed -i 's/\r$//' /usr/local/bin/docker-entrypoint.sh && \
+    chmod +x /usr/local/bin/docker-entrypoint.sh
+
 # Copy built application
 COPY --from=build /app /app
 
-# Start the server by default, this can be overwritten at runtime
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD [ "npm", "run", "start" ]
