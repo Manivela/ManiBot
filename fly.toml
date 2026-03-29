@@ -7,6 +7,8 @@ app = "manibot"
 primary_region = "ams"
 
 [build]
+	# Optional: override Dockerfile default without editing the file, e.g. after a new yt-dlp release
+	# args = { YTDLP_VERSION = "2026.03.17" }
 
 [vm]
 	cpu_kind = "shared"

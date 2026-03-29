@@ -1,9 +1,6 @@
 const mockSentryCaptureException = jest.fn();
 const mockSpawn = jest.fn();
-const mockPlayValidate = jest.fn();
-const mockPlayVideoInfo = jest.fn();
-const mockPlayPlaylistInfo = jest.fn();
-const mockPlaySearch = jest.fn();
+const mockExecFile = jest.fn();
 const mockCreateAudioResource = jest.fn((stream, options) => ({
   stream,
   options,
@@ -17,13 +14,7 @@ jest.mock("@sentry/node", () => ({
 
 jest.mock("child_process", () => ({
   spawn: (...args) => mockSpawn(...args),
-}));
-
-jest.mock("play-dl", () => ({
-  yt_validate: (...args) => mockPlayValidate(...args),
-  video_basic_info: (...args) => mockPlayVideoInfo(...args),
-  playlist_info: (...args) => mockPlayPlaylistInfo(...args),
-  search: (...args) => mockPlaySearch(...args),
+  execFile: (...args) => mockExecFile(...args),
 }));
 
 jest.mock("@discordjs/voice", () => ({
@@ -94,7 +85,6 @@ const createConnection = () => ({
 
 describe("music player", () => {
   beforeEach(() => {
-    jest.resetModules();
     jest.clearAllMocks();
 
     mockSpawn.mockImplementation(() => {
@@ -111,16 +101,28 @@ describe("music player", () => {
       };
       return proc;
     });
-    mockPlayValidate.mockReturnValue("video");
-    mockPlayVideoInfo.mockResolvedValue({
-      video_details: {
-        durationRaw: ["3", "21"],
-        title: "Track A",
-        url: "https://youtube.com/watch?v=abc",
-      },
+    mockExecFile.mockImplementation((cmd, args, options, callback) => {
+      const cb =
+        typeof options === "function"
+          ? options
+          : typeof callback === "function"
+            ? callback
+            : null;
+      if (!cb) {
+        throw new Error("execFile mock: expected callback");
+      }
+
+      setImmediate(() =>
+        cb(
+          null,
+          JSON.stringify({
+            title: "Track A",
+            webpage_url: "https://youtube.com/watch?v=abc",
+            duration: 201,
+          }),
+        ),
+      );
     });
-    mockPlayPlaylistInfo.mockReset();
-    mockPlaySearch.mockReset();
 
     mockJoinVoiceChannel.mockImplementation(() => createConnection());
     mockEntersState.mockResolvedValue(undefined);
@@ -265,8 +267,23 @@ describe("music player", () => {
     const player = loadPlayer();
     const { guild, textChannel, voiceChannel } = createFixtures();
 
-    mockPlayValidate.mockReturnValue("search");
-    mockPlaySearch.mockResolvedValue([]);
+    mockExecFile.mockImplementation((cmd, args, options, callback) => {
+      const cb =
+        typeof options === "function"
+          ? options
+          : typeof callback === "function"
+            ? callback
+            : null;
+      if (!cb) {
+        throw new Error("execFile mock: expected callback");
+      }
+
+      setImmediate(() => {
+        const err = new Error("yt-dlp exited with code 1");
+        err.stderr = "ERROR: [youtube] no results found for query";
+        cb(err);
+      });
+    });
 
     await expect(
       player.enqueue({

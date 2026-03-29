@@ -31,12 +31,17 @@ COPY --link . .
 # Final stage for app image
 FROM base
 
-# Install yt-dlp
+# Pin a release tag — the literal "latest" URL never changes, so Docker layer cache
+# can keep an old yt-dlp binary across many `fly deploy`s. Bump YTDLP_VERSION when
+# YouTube playback breaks or to pick up fixes (see https://github.com/yt-dlp/yt-dlp/releases).
+ARG YTDLP_VERSION=2026.03.17
+
 RUN apt-get update -qq && \
     apt-get install -y --no-install-recommends curl ca-certificates ffmpeg && \
-    curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux \
+    curl -fSL "https://github.com/yt-dlp/yt-dlp/releases/download/${YTDLP_VERSION}/yt-dlp_linux" \
       -o /usr/local/bin/yt-dlp && \
     chmod a+rx /usr/local/bin/yt-dlp && \
+    yt-dlp --version && \
     rm -rf /var/lib/apt/lists/*
 
 # Copy built application

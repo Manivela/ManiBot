@@ -1,6 +1,5 @@
 const mockSpawn = jest.fn();
-const mockPlayValidate = jest.fn();
-const mockPlayVideoInfo = jest.fn();
+const mockExecFile = jest.fn();
 const mockCreateAudioResource = jest.fn((stream, options) => ({
   stream,
   options,
@@ -15,13 +14,7 @@ jest.mock("@sentry/node", () => ({
 
 jest.mock("child_process", () => ({
   spawn: (...args) => mockSpawn(...args),
-}));
-
-jest.mock("play-dl", () => ({
-  yt_validate: (...args) => mockPlayValidate(...args),
-  video_basic_info: (...args) => mockPlayVideoInfo(...args),
-  playlist_info: jest.fn(),
-  search: jest.fn(),
+  execFile: (...args) => mockExecFile(...args),
 }));
 
 jest.mock("@discordjs/voice", () => ({
@@ -107,16 +100,29 @@ const createMessage = ({ content, voiceChannelId = "voice-1" }) => {
 
 describe("music command smoke integration", () => {
   beforeEach(() => {
-    jest.resetModules();
     jest.clearAllMocks();
 
-    mockPlayValidate.mockReturnValue("video");
-    mockPlayVideoInfo.mockResolvedValue({
-      video_details: {
-        durationRaw: ["2", "45"],
-        title: "Smoke Song",
-        url: "https://youtube.com/watch?v=smoke",
-      },
+    mockExecFile.mockImplementation((cmd, args, options, callback) => {
+      const cb =
+        typeof options === "function"
+          ? options
+          : typeof callback === "function"
+            ? callback
+            : null;
+      if (!cb) {
+        throw new Error("execFile mock: expected callback");
+      }
+
+      setImmediate(() =>
+        cb(
+          null,
+          JSON.stringify({
+            title: "Smoke Song",
+            webpage_url: "https://youtube.com/watch?v=smoke",
+            duration: 165,
+          }),
+        ),
+      );
     });
     mockSpawn.mockImplementation(() => {
       const stdoutOn = jest.fn();
