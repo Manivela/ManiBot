@@ -8,8 +8,11 @@ const debug = require("debug")("main");
 const voiceGatewayDebug = require("debug")("voiceGateway");
 const Sentry = require("@sentry/node");
 const musicPlayer = require("./music/player");
+const { startYtDlpScheduledUpdates } = require("./music/ytDlpScheduler");
 
 dns.setDefaultResultOrder("ipv4first");
+
+startYtDlpScheduledUpdates();
 
 Sentry.init({
   dsn: process.env.SENTRY_DSN,

@@ -7,10 +7,11 @@ app = "manibot"
 primary_region = "ams"
 
 [build]
-	# Optional: override Dockerfile default without editing the file, e.g. after a new yt-dlp release
+	# Optional: bootstrap yt-dlp in the image (docker-entrypoint upgrades from GitHub on each machine start when newer)
 	# args = { YTDLP_VERSION = "2026.03.17" }
 
 [vm]
 	cpu_kind = "shared"
 	cpus = 1
-	memory = "512mb"
+	# 512mb was tight: kernel OOM killed node while yt-dlp/node solved YouTube JS challenges.
+	memory = "1gb"
