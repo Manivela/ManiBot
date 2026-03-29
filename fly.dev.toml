@@ -5,8 +5,10 @@ app = "manibot-dev"
 primary_region = "ams"
 
 [build]
+	# Optional: bootstrap yt-dlp in the image (docker-entrypoint upgrades from GitHub on each machine start when newer)
+	# args = { YTDLP_VERSION = "2026.03.17" }
 
 [vm]
 	cpu_kind = "shared"
 	cpus = 1
-	memory = "512mb"
+	memory = "768mb"

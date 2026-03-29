@@ -13,5 +13,4 @@ primary_region = "ams"
 [vm]
 	cpu_kind = "shared"
 	cpus = 1
-	# 512mb was tight: kernel OOM killed node while yt-dlp/node solved YouTube JS challenges.
-	memory = "1gb"
+	memory = "768mb"

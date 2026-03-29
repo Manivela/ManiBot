@@ -1,0 +1,35 @@
+# Scales the app to zero Machines (same idea as `fly scale count 0`) — no CPU/RAM billing while scaled down.
+# Schedule: 01:00 Turkey (TRT, UTC+3, no DST) → 22:00 UTC.
+# Edit the cron if you change local time.
+#
+# Requires repo secret: FLY_API_TOKEN (same scope you use for deploy)
+#
+# Manual run: Actions → “Fly — stop manibot” → Run workflow
+
+name: Fly — stop manibot
+
+on:
+  schedule:
+    - cron: "0 22 * * *" # 01:00 Turkey (UTC+3)
+  workflow_dispatch:
+
+concurrency:
+  group: fly-manibot-stop
+  cancel-in-progress: false
+
+jobs:
+  stop:
+    runs-on: ubuntu-latest
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+      FLY_APP: manibot
+    steps:
+      - uses: superfly/flyctl-actions/setup-flyctl@v1
+      - name: Scale to zero
+        run: |
+          set -euo pipefail
+          if [ -z "${FLY_API_TOKEN:-}" ]; then
+            echo "Missing FLY_API_TOKEN secret"
+            exit 1
+          fi
+          flyctl scale count 0 -a "$FLY_APP" -y
