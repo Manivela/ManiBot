@@ -1,4 +1,4 @@
-const { spawn } = require("child_process");
+const { execFile, spawn } = require("child_process");
 const { writeFileSync } = require("fs");
 const { tmpdir } = require("os");
 const { join } = require("path");
@@ -16,7 +16,8 @@ const {
 } = require("@discordjs/voice");
 const Sentry = require("@sentry/node");
 const debug = require("debug")("musicPlayer");
-const play = require("play-dl");
+
+const YTDLP_METADATA_TIMEOUT_MS = 90_000;
 
 const resolveCookiesFilePath = () => {
   if (process.env.YTDLP_COOKIES_FILE) {
@@ -42,6 +43,7 @@ const resolveCookiesFilePath = () => {
 };
 
 const YTDLP_COOKIES_PATH = resolveCookiesFilePath();
+const YTDLP_BIN = process.env.YTDLP_PATH || "yt-dlp";
 const IS_FLY_RUNTIME = Boolean(
   process.env.FLY_APP_NAME || process.env.FLY_MACHINE_ID,
 );
@@ -83,6 +85,144 @@ const buildYtDlpArgs = (url, formatSelector, useCookies = false) => {
   args.push(url);
   return args;
 };
+
+const buildYtDlpMetadataArgs = (target) => {
+  const args = [
+    "--js-runtimes",
+    process.env.YTDLP_JS_RUNTIME || "node",
+    "--dump-single-json",
+    "--no-download",
+    "--quiet",
+    "--no-warnings",
+  ];
+
+  if (YTDLP_COOKIES_PATH) {
+    args.push("--cookies", YTDLP_COOKIES_PATH);
+  }
+
+  if (process.env.YTDLP_PROXY) {
+    args.push("--proxy", process.env.YTDLP_PROXY);
+  }
+
+  args.push(target);
+  return args;
+};
+
+const formatSecondsAsDurationLabel = (seconds) => {
+  if (!Number.isFinite(seconds) || seconds < 0) {
+    return "live";
+  }
+
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = Math.floor(seconds % 60);
+
+  if (h > 0) {
+    return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  }
+
+  return `${m}:${String(s).padStart(2, "0")}`;
+};
+
+const isTemporaryYoutubeMediaUrl = (value) =>
+  typeof value === "string" &&
+  (/googlevideo\.com/i.test(value) || /manifest\.googlevideo/i.test(value));
+
+const resolvePlaybackUrl = (entry) => {
+  const id = typeof entry.id === "string" ? entry.id : null;
+
+  for (const candidate of [
+    entry.webpage_url,
+    entry.original_url,
+    entry.url,
+  ]) {
+    if (typeof candidate !== "string" || !candidate.trim()) {
+      continue;
+    }
+
+    const u = candidate.trim();
+
+    if (isTemporaryYoutubeMediaUrl(u)) {
+      continue;
+    }
+
+    if (/^https?:\/\//i.test(u)) {
+      return u;
+    }
+
+    if (u.startsWith("/")) {
+      try {
+        return new URL(u, "https://www.youtube.com").href;
+      } catch {
+        continue;
+      }
+    }
+  }
+
+  if (id && /^[\w-]{11}$/.test(id)) {
+    return `https://www.youtube.com/watch?v=${id}`;
+  }
+
+  return null;
+};
+
+const ytDlpEntryToTrackFields = (entry) => {
+  const url = resolvePlaybackUrl(entry);
+  if (!url) {
+    return null;
+  }
+
+  const durationRaw =
+    entry.is_live || entry.live_status === "is_live"
+      ? "live"
+      : entry.duration === undefined || entry.duration === null
+        ? "0:00"
+        : formatSecondsAsDurationLabel(entry.duration);
+
+  return {
+    title: entry.title || "Unknown title",
+    url,
+    durationRaw,
+  };
+};
+
+const tracksFromYtDlpMetadata = (data) => {
+  if (!data || typeof data !== "object") {
+    return [];
+  }
+
+  if (Array.isArray(data.entries) && data.entries.length > 0) {
+    return data.entries.map(ytDlpEntryToTrackFields).filter(Boolean);
+  }
+
+  const single = ytDlpEntryToTrackFields(data);
+  return single ? [single] : [];
+};
+
+const runYtDlpMetadataJson = (target) =>
+  new Promise((resolve, reject) => {
+    execFile(
+      YTDLP_BIN,
+      buildYtDlpMetadataArgs(target),
+      {
+        maxBuffer: 50 * 1024 * 1024,
+        timeout: YTDLP_METADATA_TIMEOUT_MS,
+        windowsHide: true,
+      },
+      (err, stdout, stderr) => {
+        if (err) {
+          if (stderr !== undefined && stderr !== null) {
+            err.stderr = stderr;
+          }
+
+          reject(err);
+          return;
+        }
+
+        resolve(stdout);
+      },
+    );
+  });
 
 const streamWithYtDlp = (url) =>
   new Promise((resolve, reject) => {
@@ -165,7 +305,7 @@ const streamWithYtDlp = (url) =>
       const { formatSelector, useCookies } = attempt;
       stderrBuffer = "";
       gotAudioData = false;
-      proc = spawn("yt-dlp", buildYtDlpArgs(url, formatSelector, useCookies));
+      proc = spawn(YTDLP_BIN, buildYtDlpArgs(url, formatSelector, useCookies));
       debug(
         `yt-dlp using format selector: ${formatSelector} (cookies=${useCookies})`,
       );
@@ -554,31 +694,46 @@ const ensureConnection = async (queue, voiceChannel) => {
 };
 
 const resolveTracks = async (query, requestedBy) => {
-  const type = play.yt_validate(query);
-
-  if (type === "video") {
-    const video = await play.video_basic_info(query);
-    return [normalizeTrack(video.video_details, requestedBy)];
-  }
-
-  if (type === "playlist") {
-    const playlist = await play.playlist_info(query, { incomplete: true });
-    const videos = await playlist.all_videos();
-    return videos
-      .filter(Boolean)
-      .map((track) => normalizeTrack(track, requestedBy));
-  }
-
-  const results = await play.search(query, {
-    limit: 1,
-    source: { youtube: "video" },
-  });
-
-  if (!results.length) {
+  const trimmed = query.trim();
+  if (!trimmed) {
     throw new Error("No YouTube results found for that query.");
   }
 
-  return [normalizeTrack(results[0], requestedBy)];
+  const target = /^https?:\/\//i.test(trimmed)
+    ? trimmed
+    : `ytsearch1:${trimmed}`;
+
+  let data;
+  try {
+    const stdout = await runYtDlpMetadataJson(target);
+    data = JSON.parse(String(stdout).trim());
+  } catch (error) {
+    const stderr = error.stderr?.toString?.() || "";
+    if (/no results found|No matching entries|did not match any videos/i.test(stderr)) {
+      throw new Error("No YouTube results found for that query.");
+    }
+
+    const firstStderrLine = stderr.trim().split("\n").filter(Boolean)[0] || "";
+    const cookieHint =
+      /Sign in to confirm|not a bot|login|Private video|Video unavailable/i.test(
+        stderr,
+      )
+        ? " If YouTube is blocking this host, set the YTDLP_COOKIES secret (see README)."
+        : "";
+
+    throw new Error(
+      `Could not resolve that track.${cookieHint}${
+        firstStderrLine ? ` ${firstStderrLine}` : ""
+      }`,
+    );
+  }
+
+  const rawTracks = tracksFromYtDlpMetadata(data);
+  if (!rawTracks.length) {
+    throw new Error("No YouTube results found for that query.");
+  }
+
+  return rawTracks.map((track) => normalizeTrack(track, requestedBy));
 };
 
 const getQueue = (guildId) => guildQueues.get(guildId) || null;
