@@ -1,0 +1,39 @@
+name: Deploy to Fly
+
+on:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: fly-manibot-deploy
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm test
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: superfly/flyctl-actions/setup-flyctl@v1
+      - name: Deploy
+        run: flyctl deploy --remote-only --config fly.toml --app manibot
+      - name: Set release metadata
+        run: |
+          flyctl secrets set \
+            RELEASE_VERSION="gh-${{ github.run_number }}" \
+            GIT_SHA="${{ github.sha }}" \
+            --app manibot
