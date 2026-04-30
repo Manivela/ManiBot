@@ -27,7 +27,8 @@
   },
   "overrides": {
     "undici": "^6.24.0",
-    "lodash": "^4.18.0"
+    "lodash": "^4.18.0",
+    "uuid": "^14.0.0"
   },
   "engineStrict": true,
   "engines": {
