@@ -1,7 +1,10 @@
 # syntax = docker/dockerfile:1
 
-# Adjust NODE_VERSION as desired
-ARG NODE_VERSION=20.19.0
+# Adjust NODE_VERSION as desired.
+# Must be >= 22.0.0: yt-dlp's EJS YouTube signature/n-challenge solver requires
+# a Node >= 22 runtime (or Deno). On Node 20 the solver fails and YouTube returns
+# only storyboard images, surfacing as "Requested format is not available".
+ARG NODE_VERSION=22.23.0
 FROM node:${NODE_VERSION}-slim as base
 
 LABEL fly_launch_runtime="Node.js"
@@ -42,6 +45,14 @@ RUN apt-get update -qq && \
     chmod a+rx /usr/local/bin/yt-dlp && \
     yt-dlp --version && \
     rm -rf /var/lib/apt/lists/*
+
+# Deno is yt-dlp's recommended (sandboxed) runtime for solving YouTube's
+# signature/n-challenges. Preferring it keeps challenge-solving working
+# independently of the app's Node version. Node 22 (the base image) stays as a
+# fallback runtime via YTDLP_JS_RUNTIME below.
+COPY --from=denoland/deno:bin /deno /usr/local/bin/deno
+RUN chmod a+rx /usr/local/bin/deno && deno --version
+ENV YTDLP_JS_RUNTIME=deno,node
 
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN sed -i 's/\r$//' /usr/local/bin/docker-entrypoint.sh && \

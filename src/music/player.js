@@ -48,6 +48,18 @@ const IS_FLY_RUNTIME = Boolean(
   process.env.FLY_APP_NAME || process.env.FLY_MACHINE_ID,
 );
 
+// yt-dlp needs --js-runtimes repeated once per runtime (a comma-joined value is
+// rejected). Expand "deno,node" into ["--js-runtimes", "deno", "--js-runtimes", "node"]
+// so the preference list (deno first, node fallback) is honoured.
+const buildJsRuntimeArgs = () => {
+  const raw = process.env.YTDLP_JS_RUNTIME || "node";
+  return raw
+    .split(",")
+    .map((runtime) => runtime.trim())
+    .filter(Boolean)
+    .flatMap((runtime) => ["--js-runtimes", runtime]);
+};
+
 const getFormatSelectors = () => {
   if (process.env.YTDLP_FORMAT) {
     return [process.env.YTDLP_FORMAT];
@@ -61,8 +73,7 @@ const getFormatSelectors = () => {
 
 const buildYtDlpArgs = (url, formatSelector, useCookies = false) => {
   const args = [
-    "--js-runtimes",
-    process.env.YTDLP_JS_RUNTIME || "node",
+    ...buildJsRuntimeArgs(),
     "-f",
     formatSelector,
     "--no-playlist",
@@ -88,8 +99,7 @@ const buildYtDlpArgs = (url, formatSelector, useCookies = false) => {
 
 const buildYtDlpMetadataArgs = (target) => {
   const args = [
-    "--js-runtimes",
-    process.env.YTDLP_JS_RUNTIME || "node",
+    ...buildJsRuntimeArgs(),
     "--dump-single-json",
     "--no-download",
     "--quiet",
