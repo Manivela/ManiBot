@@ -29,6 +29,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: superfly/flyctl-actions/setup-flyctl@v1
+      - name: Check running state
+        id: pre
+        run: |
+          RUNNING=$(flyctl machines list -a manibot --json | jq '[.[] | select(.state == "started")] | length')
+          echo "running=$RUNNING" >> "$GITHUB_OUTPUT"
       - name: Deploy
         run: flyctl deploy --remote-only --config fly.toml --app manibot
       - name: Set release metadata
@@ -37,3 +42,8 @@ jobs:
             RELEASE_VERSION="gh-${{ github.run_number }}" \
             GIT_SHA="${{ github.sha }}" \
             --app manibot
+      - name: Restore scale-zero if app was down before deploy
+        if: steps.pre.outputs.running == '0'
+        run: |
+          echo "App was scaled to zero before deploy — restoring that state"
+          flyctl scale count 0 -a manibot -y
