@@ -16,6 +16,7 @@ const {
 } = require("@discordjs/voice");
 const Sentry = require("@sentry/node");
 const debug = require("debug")("musicPlayer");
+const volumeStore = require("./volumeStore");
 
 const YTDLP_METADATA_TIMEOUT_MS = 90_000;
 
@@ -385,6 +386,31 @@ const MAX_VOLUME = 2;
 
 const getPreferredVolume = (guildId) =>
   guildVolumePreferences.get(guildId) ?? DEFAULT_VOLUME;
+
+const clampVolume = (volume) =>
+  Math.min(MAX_VOLUME, Math.max(MIN_VOLUME, volume));
+
+// Load persisted per-guild volume preferences into the in-memory cache. Call
+// once at startup before the bot serves commands. Safe to call when storage is
+// disabled (resolves with nothing applied) and never throws.
+const hydratePreferredVolumes = async () => {
+  try {
+    const stored = await volumeStore.load();
+    for (const [guildId, volume] of stored) {
+      if (!Number.isFinite(volume)) {
+        continue;
+      }
+      guildVolumePreferences.set(guildId, clampVolume(volume));
+    }
+    debug(
+      "hydrated %d guild volume preference(s)",
+      guildVolumePreferences.size,
+    );
+  } catch (error) {
+    debug("failed to hydrate volume preferences", error);
+    Sentry.captureException(error);
+  }
+};
 
 const formatDuration = (durationRaw) => {
   if (!durationRaw) {
@@ -848,6 +874,9 @@ const setVolume = (guildId, volume) => {
   }
 
   guildVolumePreferences.set(guildId, volume);
+  // Fire-and-forget: volumeStore.save swallows its own errors, so a flaky
+  // backend never blocks or breaks the command.
+  volumeStore.save(guildId, volume);
 
   const queue = getQueue(guildId);
   if (queue) {
@@ -873,6 +902,7 @@ module.exports = {
   getNowPlaying,
   getQueue,
   getVolume,
+  hydratePreferredVolumes,
   pause,
   resume,
   setVolume,

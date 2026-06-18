@@ -70,4 +70,9 @@ client.on("raw", (packet) => {
 //   voiceStateUpdateHandler(oldState, newState, client);
 // });
 
-client.login(process.env.BOT_TOKEN);
+// Load persisted volume preferences before serving commands. hydrate never
+// rejects, but log-in proceeds regardless so storage issues can't block boot.
+musicPlayer
+  .hydratePreferredVolumes()
+  .catch((error) => debug("failed to hydrate volume preferences", error))
+  .finally(() => client.login(process.env.BOT_TOKEN));

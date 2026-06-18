@@ -39,6 +39,35 @@ The bot joins the caller's voice channel, queues tracks per guild, and leaves au
 
 `!version` shows app version and, when available, deploy metadata (`RELEASE_VERSION` and `GIT_SHA`).
 
+### Persisting volume settings
+
+By default the per-guild volume set with `!volume` lives in memory only and resets when the
+process restarts. On Fly the Machine is **destroyed** when scaled to zero (overnight) and rebuilt
+on deploy, so in-memory state is lost on both — and a Fly volume would add storage cost.
+
+To persist volume for free, point the bot at a [free-tier Upstash Redis](https://upstash.com)
+(serverless, accessed over HTTPS — no extra npm dependency). Set both REST credentials:
+
+```
+UPSTASH_REDIS_REST_URL=...
+UPSTASH_REDIS_REST_TOKEN=...
+```
+
+On Fly, set them as secrets on **each** app:
+
+```
+flyctl secrets set UPSTASH_REDIS_REST_URL=... UPSTASH_REDIS_REST_TOKEN=... -a manibot
+flyctl secrets set UPSTASH_REDIS_REST_URL=... UPSTASH_REDIS_REST_TOKEN=... -a manibot-dev
+```
+
+**Keep dev and prod state separate.** If `manibot` and `manibot-dev` share a Discord server
+(same guild IDs) and the same Redis, they will overwrite each other's volume. Either give each
+app its **own** Upstash database, or point them at different hash keys with `MANIBOT_VOLUME_KEY`
+(e.g. `manibot:volumes` for prod, `manibot-dev:volumes` for dev).
+
+When the variables are unset the bot keeps its previous in-memory behaviour, and any Redis
+outage is logged and ignored — it never blocks the `!volume` command or startup.
+
 ## CI deploy metadata
 
 CircleCI deploys `main` to Fly and sets runtime secrets used by `!version`.
