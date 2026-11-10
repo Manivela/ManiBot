@@ -26,12 +26,12 @@
     "tweetnacl": "^1.0.3"
   },
   "overrides": {
-    "undici": "^6.27.0",
+    "undici": "^6.29.1",
     "lodash": "^4.18.0",
     "uuid": "^14.0.0",
     "ws": "^8.20.1",
     "@babel/core": "^7.29.7",
-    "js-yaml": "^4.2.0"
+    "js-yaml": "^4.3.2"
   },
   "engineStrict": true,
   "engines": {
