@@ -96,7 +96,12 @@ describe("music player", () => {
       });
       const proc = {
         on: jest.fn(),
-        stdout: { on: stdoutOn, once: stdoutOnce, pipe: jest.fn() },
+        stdout: {
+          on: stdoutOn,
+          once: stdoutOnce,
+          pipe: jest.fn(),
+          destroy: jest.fn(),
+        },
         stderr: { on: jest.fn() },
       };
       return proc;
@@ -154,6 +159,30 @@ describe("music player", () => {
     expect(textChannel.send).toHaveBeenCalledWith(
       "▶️ Now playing: **Track A** (3:21)",
     );
+
+    player.cleanupQueue(guild.id);
+  });
+
+  it("closes yt-dlp's stdout when playback tears the stream down", async () => {
+    const player = loadPlayer();
+    const { guild, textChannel, voiceChannel } = createFixtures();
+
+    await player.enqueue({
+      guild,
+      query: "test",
+      requestedBy: "tester",
+      textChannel,
+      voiceChannel,
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    const [stream] = mockCreateAudioResource.mock.calls[0];
+    const proc = mockSpawn.mock.results[0].value;
+    expect(proc.stdout.destroy).not.toHaveBeenCalled();
+
+    stream.destroy();
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(proc.stdout.destroy).toHaveBeenCalled();
 
     player.cleanupQueue(guild.id);
   });

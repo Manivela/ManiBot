@@ -133,7 +133,12 @@ describe("music command smoke integration", () => {
       });
       const proc = {
         on: jest.fn(),
-        stdout: { on: stdoutOn, once: stdoutOnce, pipe: jest.fn() },
+        stdout: {
+          on: stdoutOn,
+          once: stdoutOnce,
+          pipe: jest.fn(),
+          destroy: jest.fn(),
+        },
         stderr: { on: jest.fn() },
       };
       return proc;

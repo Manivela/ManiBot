@@ -265,6 +265,9 @@ const streamWithYtDlp = (url) =>
     let proc;
 
     const audioStream = new PassThrough();
+    // On skip/stop, close yt-dlp's stdout so it exits (EPIPE) instead of
+    // blocking forever on a pipe nobody reads.
+    audioStream.once("close", () => proc?.stdout?.destroy());
     let didResolve = false;
     let gotAudioData = false;
     let stderrBuffer = "";
