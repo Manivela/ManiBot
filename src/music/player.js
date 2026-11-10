@@ -1,5 +1,17 @@
 const { execFile, spawn } = require("child_process");
-const { writeFileSync } = require("fs");
+const { createHash } = require("crypto");
+const {
+  createReadStream,
+  createWriteStream,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  utimes,
+  writeFileSync,
+} = require("fs");
+const { rename, rm } = require("fs/promises");
 const { setPriority, tmpdir } = require("os");
 const { join } = require("path");
 const { PassThrough } = require("stream");
@@ -17,6 +29,7 @@ const {
 const Sentry = require("@sentry/node");
 const debug = require("debug")("musicPlayer");
 const volumeStore = require("./volumeStore");
+const { createLru } = require("../utils/lru");
 
 const YTDLP_METADATA_TIMEOUT_MS = 90_000;
 
@@ -245,8 +258,66 @@ const runYtDlpMetadataJson = (target) =>
 // Fits a whole PREFETCH_MAX_SECONDS track (format 251 is ~1MB/min).
 const STREAM_BUFFER_BYTES = 16 * 1024 * 1024;
 
+// Finished downloads, so a repeat skips yt-dlp. Values are file sizes.
+const AUDIO_CACHE_DIR = join(tmpdir(), "manibot-audio-cache");
+const audioCachePath = (key) => join(AUDIO_CACHE_DIR, `${key}.audio`);
+const audioCache = createLru(
+  5 * 1024 ** 3,
+  (size) => size,
+  (key) => rm(audioCachePath(key), { force: true }).catch(debug),
+);
+
+// Rebuild the index from disk, oldest first; drop leftover partial writes.
+try {
+  readdirSync(AUDIO_CACHE_DIR)
+    .flatMap((name) => {
+      const path = join(AUDIO_CACHE_DIR, name);
+      if (!name.endsWith(".audio")) {
+        rmSync(path, { force: true });
+        return [];
+      }
+      const { size, mtimeMs } = statSync(path);
+      return [{ key: name.slice(0, -".audio".length), size, mtimeMs }];
+    })
+    .sort((a, b) => a.mtimeMs - b.mtimeMs)
+    .forEach(({ key, size }) => audioCache.set(key, size));
+} catch (error) {
+  if (error.code !== "ENOENT") {
+    debug("audio cache unreadable: %s", error.message);
+  }
+}
+
+// Only stops a live stream filling the disk (~8h of format 251). Off on Fly,
+// whose machine is deleted every night.
+const MAX_CACHED_TRACK_BYTES = IS_FLY_RUNTIME ? 0 : 512 * 1024 * 1024;
+
+// !play text or link -> track. Search results can change, so they expire.
+const lookupCache = createLru(500);
+const SEARCH_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
+// The YouTube video ID for any link form, else a hash of the URL.
+const audioCacheKey = (url) =>
+  url.match(/(?:[?&]v=|youtu\.be\/|\/shorts\/)([\w-]{11})/)?.[1] ||
+  `url-${createHash("sha256").update(url).digest("hex").slice(0, 32)}`;
+
 const streamWithYtDlp = (url, { lowPriority = false } = {}) =>
   new Promise((resolve, reject) => {
+    const cacheKey = audioCacheKey(url);
+    if (audioCache.get(cacheKey)) {
+      const path = audioCachePath(cacheKey);
+      if (existsSync(path)) {
+        const now = new Date();
+        utimes(path, now, now, () => {}); // recency survives a restart
+        resolve({
+          stream: createReadStream(path),
+          type: StreamType.Arbitrary,
+          proc: null,
+        });
+        return;
+      }
+      audioCache.delete(cacheKey); // removed behind our back: fetch it again
+    }
+
     const formatSelectors = getFormatSelectors();
     const useCookieOnly = IS_FLY_RUNTIME && Boolean(YTDLP_COOKIES_PATH);
     const attemptConfigs = useCookieOnly
@@ -277,6 +348,61 @@ const streamWithYtDlp = (url, { lowPriority = false } = {}) =>
     let gotAudioData = false;
     let stderrBuffer = "";
     let startTimeout;
+    // Streamed to a temp file and renamed into the cache only when complete.
+    let cacheWriter = null;
+    let cacheBytes = 0;
+    let cacheAbandoned = false;
+    let stdoutEnded = false;
+    const abandonCache = () => {
+      cacheAbandoned = true;
+      if (cacheWriter) {
+        const temporary = cacheWriter.path;
+        cacheWriter.destroy();
+        rm(temporary, { force: true }).catch(debug);
+        cacheWriter = null;
+      }
+    };
+    const collectForCache = (chunk) => {
+      if (cacheAbandoned) {
+        return;
+      }
+      cacheBytes += chunk.length;
+      if (cacheBytes > MAX_CACHED_TRACK_BYTES) {
+        abandonCache();
+        return;
+      }
+      if (!cacheWriter) {
+        try {
+          mkdirSync(AUDIO_CACHE_DIR, { recursive: true });
+        } catch (error) {
+          debug("audio cache unwritable: %s", error.message);
+          abandonCache();
+          return;
+        }
+        cacheWriter = createWriteStream(
+          `${audioCachePath(cacheKey)}.${process.pid}-${Date.now()}.tmp`,
+        );
+        cacheWriter.on("error", (error) => {
+          debug("audio cache write failed: %s", error.message);
+          abandonCache();
+        });
+      }
+      cacheWriter.write(chunk);
+    };
+    const keepInCache = () => {
+      const writer = cacheWriter;
+      const size = cacheBytes;
+      cacheWriter = null;
+      writer.end(() =>
+        rename(writer.path, audioCachePath(cacheKey))
+          .then(() => audioCache.set(cacheKey, size))
+          .catch((error) => {
+            debug("could not cache %s: %s", cacheKey, error.message);
+            return rm(writer.path, { force: true });
+          })
+          .catch(debug),
+      );
+    };
 
     const clearStartTimeout = () => {
       if (startTimeout) {
@@ -329,6 +455,10 @@ const streamWithYtDlp = (url, { lowPriority = false } = {}) =>
       const { formatSelector, useCookies } = attempt;
       stderrBuffer = "";
       gotAudioData = false;
+      cacheWriter = null;
+      cacheBytes = 0;
+      cacheAbandoned = false;
+      stdoutEnded = false;
       proc = spawn(YTDLP_BIN, buildYtDlpArgs(url, formatSelector, useCookies));
       if (lowPriority && proc.pid) {
         // Let playback win the CPU; children inherit the niceness.
@@ -356,6 +486,11 @@ const streamWithYtDlp = (url, { lowPriority = false } = {}) =>
         debug(`yt-dlp: ${line}`);
       });
 
+      proc.stdout.on("data", collectForCache);
+      proc.stdout.once("end", () => {
+        stdoutEnded = true;
+      });
+
       proc.stdout.once("data", (firstChunk) => {
         gotAudioData = true;
         audioStream.write(firstChunk);
@@ -366,6 +501,13 @@ const streamWithYtDlp = (url, { lowPriority = false } = {}) =>
       proc.stdout.on("error", fail);
 
       proc.on("close", (code) => {
+        // Complete only if yt-dlp exited 0 AND we read stdout to the end.
+        if (code === 0 && stdoutEnded && cacheWriter && !cacheAbandoned) {
+          keepInCache();
+        } else {
+          abandonCache();
+        }
+
         if (didResolve) {
           return;
         }
@@ -593,6 +735,7 @@ const cleanupQueue = (guildId) => {
     return;
   }
 
+  clearTimeout(queue.idleTimer);
   clearTracks(queue);
   queue.currentTrack = null;
 
@@ -601,6 +744,33 @@ const cleanupQueue = (guildId) => {
   }
 
   guildQueues.delete(guildId);
+};
+
+// Any non-bot left in the bot's current voice channel? Unknown counts as yes.
+const hasListeners = (queue) => {
+  const channel =
+    queue.voiceChannel?.guild?.members?.me?.voice?.channel ??
+    queue.voiceChannel;
+  const members = channel?.members;
+  return !members || members.some((member) => !member.user?.bot);
+};
+
+const IDLE_LEAVE_MS = 30_000;
+
+// Linger before leaving so a follow-up !play reuses the connection.
+const leaveWhenIdle = (queue) => {
+  clearTimeout(queue.idleTimer);
+  queue.idleTimer = setTimeout(() => {
+    if (
+      getQueue(queue.guildId) === queue &&
+      !queue.currentTrack &&
+      !queue.tracks.length &&
+      !queue.pendingEnqueues
+    ) {
+      cleanupQueue(queue.guildId);
+    }
+  }, IDLE_LEAVE_MS);
+  queue.idleTimer.unref?.();
 };
 
 const processQueue = async (queue) => {
@@ -615,6 +785,19 @@ const processQueue = async (queue) => {
     return;
   }
 
+  // Checked before every song: don't play on to an empty channel.
+  if (!hasListeners(queue)) {
+    if (queue.tracks.length) {
+      queue.textChannel
+        ?.send(
+          "Everyone left the voice channel, so I stopped and cleared the queue.",
+        )
+        .catch(debug);
+    }
+    cleanupQueue(queue.guildId);
+    return;
+  }
+
   queue.isProcessing = true;
   let shouldRetry = false;
   let nextTrack = null;
@@ -623,7 +806,7 @@ const processQueue = async (queue) => {
   try {
     nextTrack = queue.tracks.shift();
     if (!nextTrack) {
-      cleanupQueue(queue.guildId);
+      leaveWhenIdle(queue);
       return;
     }
 
@@ -667,7 +850,7 @@ const processQueue = async (queue) => {
   }
 };
 
-const createQueue = ({ guildId, textChannel, voiceChannelId }) => {
+const createQueue = ({ guildId, textChannel, voiceChannel }) => {
   const player = createAudioPlayer({
     behaviors: {
       noSubscriber: NoSubscriberBehavior.Pause,
@@ -685,7 +868,8 @@ const createQueue = ({ guildId, textChannel, voiceChannelId }) => {
     textChannel,
     tracks: [],
     volume: getPreferredVolume(guildId),
-    voiceChannelId,
+    voiceChannel,
+    voiceChannelId: voiceChannel.id,
   };
 
   player.on(AudioPlayerStatus.Playing, async () => {
@@ -714,7 +898,7 @@ const createQueue = ({ guildId, textChannel, voiceChannelId }) => {
     queue.lastAnnouncedTrackUrl = null;
     processQueue(queue).catch((error) => {
       handleQueueError(queue, error, "failed to advance the queue");
-      cleanupQueue(queue.guildId);
+      leaveWhenIdle(queue);
     });
   });
 
@@ -723,7 +907,7 @@ const createQueue = ({ guildId, textChannel, voiceChannelId }) => {
     handleQueueError(queue, error, "audio player emitted an error");
     processQueue(queue).catch((processError) => {
       handleQueueError(queue, processError, "failed after audio player error");
-      cleanupQueue(queue.guildId);
+      leaveWhenIdle(queue);
     });
   });
 
@@ -808,9 +992,13 @@ const resolveTracks = async (query, requestedBy) => {
     throw new Error("No YouTube results found for that query.");
   }
 
-  const target = /^https?:\/\//i.test(trimmed)
-    ? trimmed
-    : `ytsearch1:${trimmed}`;
+  const isUrl = /^https?:\/\//i.test(trimmed);
+  const target = isUrl ? trimmed : `ytsearch1:${trimmed}`;
+  const cacheKey = isUrl ? trimmed : trimmed.toLowerCase().replace(/\s+/g, " ");
+  const hit = lookupCache.get(cacheKey);
+  if (hit && hit.expiresAt > Date.now()) {
+    return [normalizeTrack(hit.track, requestedBy)];
+  }
 
   let data;
   try {
@@ -842,6 +1030,14 @@ const resolveTracks = async (query, requestedBy) => {
     throw new Error("No YouTube results found for that query.");
   }
 
+  // Playlists change, so only single-track results are kept.
+  if (rawTracks.length === 1) {
+    lookupCache.set(cacheKey, {
+      track: rawTracks[0],
+      expiresAt: isUrl ? Infinity : Date.now() + SEARCH_CACHE_TTL_MS,
+    });
+  }
+
   return rawTracks.map((track) => normalizeTrack(track, requestedBy));
 };
 
@@ -868,11 +1064,7 @@ const enqueue = async ({
 
   const queue =
     getQueue(guild.id) ||
-    createQueue({
-      guildId: guild.id,
-      textChannel,
-      voiceChannelId: voiceChannel.id,
-    });
+    createQueue({ guildId: guild.id, textChannel, voiceChannel });
 
   queue.textChannel = textChannel;
 
@@ -905,7 +1097,7 @@ const enqueue = async ({
       !queue.currentTrack &&
       !queue.tracks.length
     ) {
-      cleanupQueue(guild.id);
+      leaveWhenIdle(queue);
     }
     throw failure;
   }
@@ -916,6 +1108,7 @@ const enqueue = async ({
   }
   processQueue(queue).catch((error) => {
     handleQueueError(queue, error, "failed to start playback");
+    leaveWhenIdle(queue);
   });
 
   return {
