@@ -102,6 +102,7 @@ const buildYtDlpMetadataArgs = (target) => {
   const args = [
     ...buildJsRuntimeArgs(),
     "--dump-single-json",
+    "--flat-playlist",
     "--no-download",
     "--quiet",
     "--no-warnings",
@@ -203,7 +204,11 @@ const tracksFromYtDlpMetadata = (data) => {
   }
 
   if (Array.isArray(data.entries) && data.entries.length > 0) {
-    return data.entries.map(ytDlpEntryToTrackFields).filter(Boolean);
+    // --flat-playlist lists unavailable/private videos as title-less stubs.
+    return data.entries
+      .filter((entry) => entry?.title)
+      .map(ytDlpEntryToTrackFields)
+      .filter(Boolean);
   }
 
   const single = ytDlpEntryToTrackFields(data);

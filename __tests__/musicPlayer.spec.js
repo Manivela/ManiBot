@@ -263,6 +263,61 @@ describe("music player", () => {
     player.cleanupQueue(fixtureA.guild.id);
   });
 
+  it("queues every playable entry of a playlist URL", async () => {
+    const player = loadPlayer();
+    const { guild, textChannel, voiceChannel } = createFixtures();
+
+    mockExecFile.mockImplementation((cmd, args, options, callback) => {
+      setImmediate(() =>
+        callback(
+          null,
+          JSON.stringify({
+            _type: "playlist",
+            entries: [
+              {
+                id: "aaaaaaaaaaa",
+                title: "Song A",
+                url: "https://music.youtube.com/watch?v=aaaaaaaaaaa",
+                duration: 253,
+              },
+              {
+                id: "bbbbbbbbbbb",
+                title: null,
+                url: "https://music.youtube.com/watch?v=bbbbbbbbbbb",
+                duration: null,
+              },
+              {
+                id: "ccccccccccc",
+                title: "Song C",
+                url: "https://music.youtube.com/watch?v=ccccccccccc",
+                duration: 88,
+              },
+            ],
+          }),
+        ),
+      );
+    });
+
+    const result = await player.enqueue({
+      guild,
+      query: "https://music.youtube.com/playlist?list=PLA6438AC38AC21D3E",
+      requestedBy: "tester",
+      textChannel,
+      voiceChannel,
+    });
+
+    expect(mockExecFile.mock.calls[0][1]).toContain("--flat-playlist");
+    expect(result.tracksAdded).toBe(2);
+    expect(result.tracks.map((t) => [t.title, t.url, t.durationLabel])).toEqual(
+      [
+        ["Song A", "https://music.youtube.com/watch?v=aaaaaaaaaaa", "4:13"],
+        ["Song C", "https://music.youtube.com/watch?v=ccccccccccc", "1:28"],
+      ],
+    );
+
+    player.cleanupQueue(guild.id);
+  });
+
   it("throws clear error when search returns no results", async () => {
     const player = loadPlayer();
     const { guild, textChannel, voiceChannel } = createFixtures();
