@@ -1,0 +1,37 @@
+# `docker compose up -d` next to a .env; see README "Self-hosting".
+name: manibot
+
+services:
+  bot:
+    image: ghcr.io/manivela/manibot:latest
+    env_file: .env
+    restart: always
+    init: true # reaps orphaned yt-dlp/deno processes
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - audio-cache:/tmp/manibot-audio-cache # song cache, up to 5GB
+    mem_limit: 6g
+    cpus: 4
+    logging: &logging
+      driver: local
+      options:
+        max-size: 10m
+        max-file: "5"
+
+  # Pulls the image CI publishes on every push to main and recreates the bot
+  # when it (or .env) changed.
+  updater:
+    image: docker:29-cli
+    restart: always
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - .:/srv:ro
+    working_dir: /srv
+    command: sh -c 'while true; do docker compose up -d --pull always bot; sleep 300; done'
+    mem_limit: 256m
+    cpus: 0.5
+    logging: *logging
+
+volumes:
+  audio-cache:

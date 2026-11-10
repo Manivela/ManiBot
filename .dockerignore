@@ -10,3 +10,5 @@ fly.toml
 jest.config.js
 README.md
 sample.env
+coverage
+deploy

@@ -71,6 +71,38 @@ app its **own** Upstash database, or point them at different hash keys with `MAN
 When the variables are unset the bot keeps its previous in-memory behaviour, and any Redis
 outage is logged and ignored — it never blocks the `!volume` command or startup.
 
+## Self-hosting (Docker)
+
+Every push to `main` makes CI publish `ghcr.io/manivela/manibot:latest`. `deploy/compose.yaml`
+runs it next to an updater that pulls `latest` every 5 minutes and recreates the bot when the
+image or `.env` changed. Nothing is exposed to the internet; secrets live only in `.env`.
+
+Once, on GitHub: make the `manibot` package public (Packages → manibot → Package settings →
+Change visibility) so the host can pull it without credentials.
+
+On the host (x86-64; at least 4 CPUs or lower `cpus` in `compose.yaml`):
+
+1. Put `deploy/compose.yaml` in an empty folder with a `.env` (not `sample.env`, which sets
+   `NODE_ENV=development`):
+   ```
+   BOT_TOKEN=
+   UPSTASH_REDIS_REST_URL=
+   UPSTASH_REDIS_REST_TOKEN=
+   MANIBOT_VOLUME_KEY=
+   COMMAND_PREFIX=!
+   ```
+2. `docker compose up -d`, then `docker compose logs -f bot` until `Bot is ready`.
+
+On Windows, Docker Desktop must start on sign-in, and the bot runs only while a user is
+signed in.
+
+Moving off Fly: run `flyctl scale count 0 -a manibot` before starting the host with the same
+`BOT_TOKEN`, then remove the Fly deploy job and both Fly schedule workflows; otherwise two bots
+answer every command.
+
+Deploy: push to `main`; it is live within ~5 minutes of CI finishing (`!version` shows the
+commit). Logs: `docker compose logs --tail 100 bot`.
+
 ## CI deploy metadata
 
 CircleCI deploys `main` to Fly and sets runtime secrets used by `!version`.

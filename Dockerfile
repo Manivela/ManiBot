@@ -61,5 +61,11 @@ RUN sed -i 's/\r$//' /usr/local/bin/docker-entrypoint.sh && \
 # Copy built application
 COPY --from=build /app /app
 
+# Shown by !version. CI passes these for the published image; on Fly the
+# GIT_SHA/RELEASE_VERSION secrets override them at runtime.
+ARG GIT_SHA=""
+ARG RELEASE_VERSION=""
+ENV GIT_SHA=${GIT_SHA} RELEASE_VERSION=${RELEASE_VERSION}
+
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD [ "npm", "run", "start" ]
