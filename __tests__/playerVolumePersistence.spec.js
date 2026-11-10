@@ -1,7 +1,10 @@
 const mockLoad = jest.fn(() => Promise.resolve(new Map()));
 const mockSave = jest.fn(() => Promise.resolve());
 
-jest.mock("@sentry/node", () => ({ captureException: jest.fn() }));
+jest.mock("@sentry/node", () => ({
+  ...jest.requireActual("@sentry/node"), // spans and logs are no-ops without init
+  captureException: jest.fn(),
+}));
 
 jest.mock("../src/music/volumeStore", () => ({
   isEnabled: jest.fn(() => true),

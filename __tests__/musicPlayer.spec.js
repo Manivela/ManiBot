@@ -53,6 +53,7 @@ const mockEntersState = jest.fn(() => Promise.resolve());
 const mockJoinVoiceChannel = jest.fn();
 
 jest.mock("@sentry/node", () => ({
+  ...jest.requireActual("@sentry/node"), // spans and logs are no-ops without init
   captureException: (...args) => mockSentryCaptureException(...args),
 }));
 

@@ -89,6 +89,7 @@ On the host (x86-64; at least 4 CPUs or lower `cpus` in `compose.yaml`):
    UPSTASH_REDIS_REST_URL=
    UPSTASH_REDIS_REST_TOKEN=
    MANIBOT_VOLUME_KEY=
+   SENTRY_DSN=
    COMMAND_PREFIX=!
    ```
 2. `docker compose up -d`, then `docker compose logs -f bot` until `Bot is ready`.
@@ -101,7 +102,13 @@ Moving off Fly: run `flyctl scale count 0 -a manibot` before starting the host w
 answer every command.
 
 Deploy: push to `main`; it is live within ~5 minutes of CI finishing (`!version` shows the
-commit). Logs: `docker compose logs --tail 100 bot`.
+commit). Logs: Sentry (below), or `docker compose logs --tail 100 bot`.
+
+## Monitoring (Sentry)
+
+With `SENTRY_DSN` set and `NODE_ENV=production`, the bot sends errors, logs (everything it
+prints, one `Playing …` line per track, a warning per failed command), a trace per `!play` and
+per track start, and its memory/CPU every minute.
 
 ## CI deploy metadata
 

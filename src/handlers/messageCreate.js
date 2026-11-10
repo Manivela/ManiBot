@@ -1,3 +1,4 @@
+const Sentry = require("@sentry/node");
 const debug = require("debug")("messageCreate");
 const { createHash } = require("crypto");
 const { existsSync, readFileSync } = require("fs");
@@ -196,29 +197,31 @@ const createMessageCreateHandler = ({
             return;
           }
 
-          // Acknowledge now: the lookup takes seconds. Not awaited, so a missing
-          // permission can't block playback.
-          msg.react("👀").catch(debug);
-          msg.channel.sendTyping().catch(debug);
+          await Sentry.startSpan({ name: "!play", op: "command" }, async () => {
+            // Acknowledge now: the lookup takes seconds. Not awaited, so a missing
+            // permission can't block playback.
+            msg.react("👀").catch(debug);
+            msg.channel.sendTyping().catch(debug);
 
-          const result = await musicPlayer.enqueue({
-            guild: msg.guild,
-            voiceChannel: memberVoiceChannel,
-            textChannel: msg.channel,
-            query,
-            requestedBy: msg.author.username,
-          });
+            const result = await musicPlayer.enqueue({
+              guild: msg.guild,
+              voiceChannel: memberVoiceChannel,
+              textChannel: msg.channel,
+              query,
+              requestedBy: msg.author.username,
+            });
 
-          if (result.tracksAdded === 1) {
-            if (result.started) {
-              await msg.channel.send(
-                `Queued **${result.tracks[0].title}** (${result.tracks[0].durationLabel}).`,
-              );
+            if (result.tracksAdded === 1) {
+              if (result.started) {
+                await msg.channel.send(
+                  `Queued **${result.tracks[0].title}** (${result.tracks[0].durationLabel}).`,
+                );
+              }
+              return;
             }
-            return;
-          }
 
-          await msg.channel.send(`Queued ${result.tracksAdded} track(s).`);
+            await msg.channel.send(`Queued ${result.tracksAdded} track(s).`);
+          });
           return;
         }
 
@@ -355,6 +358,10 @@ const createMessageCreateHandler = ({
       }
     } catch (error) {
       debug(error);
+      Sentry.logger.warn(`${prefix}${command} failed: ${error?.message}`, {
+        command,
+        guild_id: msg.guild.id,
+      });
       await msg.channel.send(getUserFacingErrorMessage(error));
     }
   };

@@ -626,11 +626,16 @@ const openTrackStream = async (track) => {
       return await track.prefetch;
     } catch (error) {
       debug("prefetch unusable, restarting stream: %s", error?.message);
+      track.prefetch = null; // so Sentry reports a fresh download
     }
   }
 
   return streamWithYtDlp(track.url);
 };
+
+// Where a track's audio came from, for Sentry.
+const audioSource = (track, { proc }) =>
+  !proc ? "cache" : track.prefetch ? "prefetch" : "youtube";
 
 const clearTracks = (queue) => {
   for (const track of queue.tracks) {
@@ -811,7 +816,16 @@ const processQueue = async (queue) => {
     }
 
     queue.currentTrack = nextTrack;
-    const stream = await openTrackStream(nextTrack);
+    // Its own transaction: the !play span has usually ended by now.
+    const startedAt = Date.now();
+    const stream = await Sentry.startSpan(
+      { name: "start track", op: "audio", forceTransaction: true },
+      async (span) => {
+        const opened = await openTrackStream(nextTrack);
+        span.setAttribute("audio.source", audioSource(nextTrack, opened));
+        return opened;
+      },
+    );
     const resource = createAudioResource(stream.stream, {
       inputType: stream.type,
       inlineVolume: true,
@@ -825,6 +839,12 @@ const processQueue = async (queue) => {
     queue.lastResource = resource;
 
     queue.player.play(resource);
+    Sentry.logger.info(`Playing ${nextTrack.title}`, {
+      source: audioSource(nextTrack, stream),
+      ms_to_first_audio: Date.now() - startedAt,
+      duration_s: nextTrack.durationSeconds,
+      guild_id: queue.guildId,
+    });
   } catch (error) {
     queue.currentTrack = null;
     shouldRetry = queue.tracks.length > 0;
@@ -896,7 +916,7 @@ const createQueue = ({ guildId, textChannel, voiceChannel }) => {
 
     queue.currentTrack = null;
     queue.lastAnnouncedTrackUrl = null;
-    processQueue(queue).catch((error) => {
+    Sentry.startNewTrace(() => processQueue(queue)).catch((error) => {
       handleQueueError(queue, error, "failed to advance the queue");
       leaveWhenIdle(queue);
     });
@@ -1072,8 +1092,12 @@ const enqueue = async ({
   // would race the connection retry).
   queue.pendingEnqueues = (queue.pendingEnqueues ?? 0) + 1;
   const [lookup, connect] = await Promise.allSettled([
-    resolveTracks(query, requestedBy),
-    ensureConnection(queue, voiceChannel),
+    Sentry.startSpan({ name: "look up track", op: "yt-dlp" }, () =>
+      resolveTracks(query, requestedBy),
+    ),
+    Sentry.startSpan({ name: "join voice", op: "voice" }, () =>
+      ensureConnection(queue, voiceChannel),
+    ),
   ]);
   queue.pendingEnqueues -= 1;
 

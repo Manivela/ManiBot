@@ -1,4 +1,4 @@
-require("dotenv").config();
+require("./instrument");
 const dns = require("node:dns");
 const { Client, GatewayIntentBits } = require("discord.js");
 const { presenceUpdateHandler } = require("./handlers/presenceUpdate");
@@ -13,20 +13,6 @@ const { startYtDlpScheduledUpdates } = require("./music/ytDlpScheduler");
 dns.setDefaultResultOrder("ipv4first");
 
 startYtDlpScheduledUpdates();
-
-Sentry.init({
-  dsn: process.env.SENTRY_DSN,
-  beforeSend: (event, hint) => {
-    if (process.env.NODE_ENV !== "production") {
-      console.error(
-        event.breadcrumbs.at(-1).message || "",
-        hint.originalException,
-      );
-      return;
-    }
-    return event;
-  },
-});
 
 const client = new Client({
   intents: [
@@ -51,9 +37,16 @@ client.on("clientReady", async () => {
   console.log("------------Bot is ready------------");
 });
 
-client.on("messageCreate", createMessageCreateHandler({ musicPlayer }));
+// A trace per message; otherwise the whole process shares one.
+const handleMessage = createMessageCreateHandler({ musicPlayer });
+client.on("messageCreate", (msg) =>
+  Sentry.startNewTrace(() => handleMessage(msg)),
+);
 
-client.on("presenceUpdate", presenceUpdateHandler);
+// Keeps the member this handler sets as the Sentry user out of other events.
+client.on("presenceUpdate", (...args) =>
+  Sentry.withIsolationScope(() => presenceUpdateHandler(...args)),
+);
 
 client.on("raw", (packet) => {
   if (packet.t !== "VOICE_SERVER_UPDATE" && packet.t !== "VOICE_STATE_UPDATE") {
