@@ -22,9 +22,10 @@ describe("Message Create Handler", () => {
         bot: authorBot,
         username: "tester",
       },
-      channel: { send },
+      channel: { send, sendTyping: jest.fn(() => Promise.resolve()) },
       content,
       guild: { id: "guild-1" },
+      react: jest.fn(() => Promise.resolve()),
       member: {
         voice: voiceChannelId
           ? {
@@ -70,6 +71,44 @@ describe("Message Create Handler", () => {
         voiceChannel: { id: "voice-1" },
       }),
     );
+    expect(msg.channel.send).toHaveBeenCalledWith(
+      "Queued **Test Song** (3:10).",
+    );
+  });
+
+  it("acknowledges !play before the track has resolved", async () => {
+    const musicPlayer = {
+      enqueue: jest.fn(() => new Promise(() => {})), // yt-dlp still working
+      getQueue: jest.fn(() => null),
+    };
+    const handler = createMessageCreateHandler({ musicPlayer });
+    const msg = createMessage({ content: "!play something slow" });
+
+    handler(msg);
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(msg.react).toHaveBeenCalledWith("👀");
+    expect(msg.channel.sendTyping).toHaveBeenCalled();
+    expect(msg.channel.send).not.toHaveBeenCalled();
+  });
+
+  it("still plays when the acknowledgement is not permitted", async () => {
+    const musicPlayer = {
+      enqueue: jest.fn(() =>
+        Promise.resolve({
+          started: true,
+          tracks: [queueTrack],
+          tracksAdded: 1,
+        }),
+      ),
+      getQueue: jest.fn(() => null),
+    };
+    const handler = createMessageCreateHandler({ musicPlayer });
+    const msg = createMessage({ content: "!play test" });
+    msg.react.mockRejectedValue(new Error("Missing Permissions"));
+
+    await handler(msg);
+
     expect(msg.channel.send).toHaveBeenCalledWith(
       "Queued **Test Song** (3:10).",
     );

@@ -866,11 +866,6 @@ const enqueue = async ({
     );
   }
 
-  const tracks = await resolveTracks(query, requestedBy);
-  if (!tracks.length) {
-    throw new Error("No playable tracks were found.");
-  }
-
   const queue =
     getQueue(guild.id) ||
     createQueue({
@@ -881,7 +876,39 @@ const enqueue = async ({
 
   queue.textChannel = textChannel;
 
-  await ensureConnection(queue, voiceChannel);
+  // Join voice while the track resolves; wait for both (leaving mid-join
+  // would race the connection retry).
+  queue.pendingEnqueues = (queue.pendingEnqueues ?? 0) + 1;
+  const [lookup, connect] = await Promise.allSettled([
+    resolveTracks(query, requestedBy),
+    ensureConnection(queue, voiceChannel),
+  ]);
+  queue.pendingEnqueues -= 1;
+
+  // !stop or a voice disconnect may have torn this queue down meanwhile.
+  const stillCurrent = getQueue(guild.id) === queue;
+  const tracks = lookup.status === "fulfilled" ? lookup.value : [];
+  const failure =
+    lookup.status === "rejected"
+      ? lookup.reason
+      : connect.status === "rejected"
+        ? connect.reason
+        : !stillCurrent
+          ? new Error("Playback was stopped before that track could start.")
+          : !tracks.length
+            ? new Error("No playable tracks were found.")
+            : null;
+  if (failure) {
+    if (
+      stillCurrent &&
+      !queue.pendingEnqueues &&
+      !queue.currentTrack &&
+      !queue.tracks.length
+    ) {
+      cleanupQueue(guild.id);
+    }
+    throw failure;
+  }
 
   queue.tracks.push(...tracks);
   if (queue.player.state.status === AudioPlayerStatus.Playing) {

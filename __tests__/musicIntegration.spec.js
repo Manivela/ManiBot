@@ -84,9 +84,10 @@ const createMessage = ({ content, voiceChannelId = "voice-1" }) => {
       bot: false,
       username: "tester",
     },
-    channel: { send },
+    channel: { send, sendTyping: jest.fn(() => Promise.resolve()) },
     content,
     guild,
+    react: jest.fn(() => Promise.resolve()),
     member: {
       voice: {
         channel: {

@@ -438,6 +438,135 @@ describe("music player", () => {
     player.cleanupQueue(guild.id);
   });
 
+  describe("joining voice while the track resolves", () => {
+    const flush = () => new Promise((resolve) => setImmediate(resolve));
+    // Each yt-dlp metadata call parks here until the test answers it.
+    const pendingLookups = [];
+    const answer = (callIndex, title) =>
+      pendingLookups[callIndex](
+        null,
+        JSON.stringify({
+          title,
+          webpage_url: "https://youtube.com/watch?v=x",
+          duration: 60,
+        }),
+      );
+    const fail = (callIndex) => {
+      const err = new Error("yt-dlp exited with code 1");
+      err.stderr = "ERROR: [youtube] no results found for query";
+      pendingLookups[callIndex](err);
+    };
+
+    beforeEach(() => {
+      pendingLookups.length = 0;
+      mockExecFile.mockImplementation((cmd, args, options, callback) => {
+        pendingLookups.push(callback);
+      });
+    });
+
+    it("joins before the lookup finishes", async () => {
+      const player = loadPlayer();
+      const { guild, textChannel, voiceChannel } = createFixtures();
+
+      const playing = player.enqueue({
+        guild,
+        voiceChannel,
+        textChannel,
+        query: "song",
+        requestedBy: "tester",
+      });
+      await flush();
+      expect(mockJoinVoiceChannel).toHaveBeenCalledTimes(1);
+      expect(pendingLookups).toHaveLength(1); // lookup still running
+
+      answer(0, "Song");
+      await expect(playing).resolves.toMatchObject({ tracksAdded: 1 });
+
+      player.cleanupQueue(guild.id);
+    });
+
+    it("leaves again when the lookup fails", async () => {
+      const player = loadPlayer();
+      const { guild, textChannel, voiceChannel } = createFixtures();
+
+      const playing = player.enqueue({
+        guild,
+        voiceChannel,
+        textChannel,
+        query: "nothing",
+        requestedBy: "tester",
+      });
+      await flush();
+      fail(0);
+
+      await expect(playing).rejects.toThrow(
+        "No YouTube results found for that query.",
+      );
+      expect(
+        mockJoinVoiceChannel.mock.results[0].value.destroy,
+      ).toHaveBeenCalled();
+      expect(player.getQueue(guild.id)).toBeNull();
+    });
+
+    it("doesn't play into a queue that !stop tore down mid-lookup", async () => {
+      const player = loadPlayer();
+      const { guild, textChannel, voiceChannel } = createFixtures();
+
+      const playing = player.enqueue({
+        guild,
+        voiceChannel,
+        textChannel,
+        query: "song",
+        requestedBy: "tester",
+      });
+      await flush();
+      player.stop(guild.id);
+      answer(0, "Song");
+
+      await expect(playing).rejects.toThrow(
+        "Playback was stopped before that track could start.",
+      );
+      expect(mockCreateAudioResource).not.toHaveBeenCalled();
+      expect(player.getQueue(guild.id)).toBeNull();
+    });
+
+    it("a failed !play doesn't tear down another one still resolving", async () => {
+      const player = loadPlayer();
+      const { guild, textChannel, voiceChannel } = createFixtures();
+
+      const first = player.enqueue({
+        guild,
+        voiceChannel,
+        textChannel,
+        query: "good",
+        requestedBy: "a",
+      });
+      const second = player.enqueue({
+        guild,
+        voiceChannel,
+        textChannel,
+        query: "typo",
+        requestedBy: "b",
+      });
+      await flush();
+      fail(1);
+      await expect(second).rejects.toThrow("No YouTube results found");
+
+      const connection = mockJoinVoiceChannel.mock.results[0].value;
+      expect(connection.destroy).not.toHaveBeenCalled();
+
+      answer(0, "Good Song");
+      await expect(first).resolves.toMatchObject({ tracksAdded: 1 });
+      await flush();
+      expect(player.getNowPlaying(guild.id)).toMatchObject({
+        title: "Good Song",
+      });
+      expect(connection.destroy).not.toHaveBeenCalled();
+
+      player.cleanupQueue(guild.id);
+    });
+  });
+
   it("throws clear error when search returns no results", async () => {
     const player = loadPlayer();
     const { guild, textChannel, voiceChannel } = createFixtures();

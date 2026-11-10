@@ -196,6 +196,11 @@ const createMessageCreateHandler = ({
             return;
           }
 
+          // Acknowledge now: the lookup takes seconds. Not awaited, so a missing
+          // permission can't block playback.
+          msg.react("👀").catch(debug);
+          msg.channel.sendTyping().catch(debug);
+
           const result = await musicPlayer.enqueue({
             guild: msg.guild,
             voiceChannel: memberVoiceChannel,
