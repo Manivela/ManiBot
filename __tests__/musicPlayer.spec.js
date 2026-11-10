@@ -187,6 +187,97 @@ describe("music player", () => {
     player.cleanupQueue(guild.id);
   });
 
+  describe("prefetching the next track", () => {
+    const urlOf = (id) => `https://music.youtube.com/watch?v=${id}`;
+    const flush = async () => {
+      for (let i = 0; i < 5; i += 1) {
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+    };
+    const spawnedUrls = () =>
+      mockSpawn.mock.calls.map(([, args]) => args.at(-1));
+    const enqueuePlaylist = async (player, durations) => {
+      mockExecFile.mockImplementation((cmd, args, options, callback) => {
+        setImmediate(() =>
+          callback(
+            null,
+            JSON.stringify({
+              entries: durations.map((duration, i) => ({
+                id: `track${i}`,
+                title: `Song ${i}`,
+                url: urlOf(`track${i}`),
+                duration,
+              })),
+            }),
+          ),
+        );
+      });
+      const fixtures = createFixtures();
+      await player.enqueue({
+        ...fixtures,
+        query: "https://music.youtube.com/playlist?list=x",
+        requestedBy: "tester",
+      });
+      await flush();
+      return fixtures.guild;
+    };
+
+    it("starts the next track's stream while one plays and reuses it", async () => {
+      const player = loadPlayer();
+      const guild = await enqueuePlaylist(player, [200, 180]);
+
+      expect(spawnedUrls()).toEqual([urlOf("track0"), urlOf("track1")]);
+      const prefetchedStream =
+        mockSpawn.mock.results[1].value.stdout.pipe.mock.calls[0][0];
+
+      player.getQueue(guild.id).player.handlers.get("idle")();
+      await flush();
+
+      expect(spawnedUrls()).toHaveLength(2);
+      expect(mockCreateAudioResource.mock.calls[1][0]).toBe(prefetchedStream);
+
+      player.cleanupQueue(guild.id);
+    });
+
+    it("tears down a prefetched stream on stop", async () => {
+      const player = loadPlayer();
+      const guild = await enqueuePlaylist(player, [200, 180]);
+      const prefetchProc = mockSpawn.mock.results[1].value;
+
+      player.stop(guild.id);
+      await flush();
+
+      expect(prefetchProc.stdout.destroy).toHaveBeenCalled();
+    });
+
+    it.each([
+      ["too long to buffer", 3600],
+      ["of unknown length", null],
+    ])("skips a next track %s", async (_, duration) => {
+      const player = loadPlayer();
+      const guild = await enqueuePlaylist(player, [200, duration]);
+
+      expect(spawnedUrls()).toEqual([urlOf("track0")]);
+
+      player.cleanupQueue(guild.id);
+    });
+
+    it("doesn't prefetch on Fly, whose 768MB can't hold two yt-dlp runs", async () => {
+      process.env.FLY_APP_NAME = "manibot";
+      jest.resetModules(); // IS_FLY_RUNTIME is read at load
+      try {
+        const player = loadPlayer();
+        const guild = await enqueuePlaylist(player, [200, 180]);
+
+        expect(spawnedUrls()).toEqual([urlOf("track0")]);
+
+        player.cleanupQueue(guild.id);
+      } finally {
+        delete process.env.FLY_APP_NAME;
+      }
+    });
+  });
+
   it("supports skip, pause, resume, and stop on active queue", async () => {
     const player = loadPlayer();
     const { guild, textChannel, voiceChannel } = createFixtures();

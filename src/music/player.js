@@ -1,6 +1,6 @@
 const { execFile, spawn } = require("child_process");
 const { writeFileSync } = require("fs");
-const { tmpdir } = require("os");
+const { setPriority, tmpdir } = require("os");
 const { join } = require("path");
 const { PassThrough } = require("stream");
 const STREAM_START_TIMEOUT_MS = 45_000;
@@ -184,17 +184,19 @@ const ytDlpEntryToTrackFields = (entry) => {
     return null;
   }
 
-  const durationRaw =
-    entry.is_live || entry.live_status === "is_live"
-      ? "live"
-      : entry.duration === undefined || entry.duration === null
-        ? "0:00"
-        : formatSecondsAsDurationLabel(entry.duration);
+  const isLive = entry.is_live || entry.live_status === "is_live";
+  const durationRaw = isLive
+    ? "live"
+    : entry.duration === undefined || entry.duration === null
+      ? "0:00"
+      : formatSecondsAsDurationLabel(entry.duration);
 
   return {
     title: entry.title || "Unknown title",
     url,
     durationRaw,
+    durationSeconds:
+      !isLive && Number.isFinite(entry.duration) ? entry.duration : null,
   };
 };
 
@@ -240,7 +242,10 @@ const runYtDlpMetadataJson = (target) =>
     );
   });
 
-const streamWithYtDlp = (url) =>
+// Fits a whole PREFETCH_MAX_SECONDS track (format 251 is ~1MB/min).
+const STREAM_BUFFER_BYTES = 16 * 1024 * 1024;
+
+const streamWithYtDlp = (url, { lowPriority = false } = {}) =>
   new Promise((resolve, reject) => {
     const formatSelectors = getFormatSelectors();
     const useCookieOnly = IS_FLY_RUNTIME && Boolean(YTDLP_COOKIES_PATH);
@@ -264,7 +269,7 @@ const streamWithYtDlp = (url) =>
     let attemptIndex = 0;
     let proc;
 
-    const audioStream = new PassThrough();
+    const audioStream = new PassThrough({ highWaterMark: STREAM_BUFFER_BYTES });
     // On skip/stop, close yt-dlp's stdout so it exits (EPIPE) instead of
     // blocking forever on a pipe nobody reads.
     audioStream.once("close", () => proc?.stdout?.destroy());
@@ -325,6 +330,14 @@ const streamWithYtDlp = (url) =>
       stderrBuffer = "";
       gotAudioData = false;
       proc = spawn(YTDLP_BIN, buildYtDlpArgs(url, formatSelector, useCookies));
+      if (lowPriority && proc.pid) {
+        // Let playback win the CPU; children inherit the niceness.
+        try {
+          setPriority(proc.pid, 19);
+        } catch (error) {
+          debug("could not lower yt-dlp priority", error);
+        }
+      }
       debug(
         `yt-dlp using format selector: ${formatSelector} (cookies=${useCookies})`,
       );
@@ -389,6 +402,7 @@ const streamWithYtDlp = (url) =>
 const guildQueues = new Map();
 const guildVolumePreferences = new Map();
 const DEFAULT_VOLUME = 0.5;
+const OPUS_BITRATE = 192_000;
 const MIN_VOLUME = 0;
 const MAX_VOLUME = 2;
 
@@ -436,8 +450,55 @@ const normalizeTrack = (track, requestedBy) => ({
   title: track.title || "Unknown title",
   url: track.url,
   durationLabel: formatDuration(track.durationRaw),
+  durationSeconds: track.durationSeconds ?? null,
   requestedBy,
 });
+
+// Start the next track's stream while the current one plays, if it fits in
+// STREAM_BUFFER_BYTES.
+const PREFETCH_MAX_SECONDS = 10 * 60;
+
+const prefetchNext = (queue) => {
+  const next = queue.tracks[0];
+  if (
+    IS_FLY_RUNTIME || // its 768MB can't hold two yt-dlp runs at once
+    !next ||
+    next.prefetch ||
+    !(next.durationSeconds > 0 && next.durationSeconds <= PREFETCH_MAX_SECONDS)
+  ) {
+    return;
+  }
+
+  next.prefetch = streamWithYtDlp(next.url, { lowPriority: true });
+  next.prefetch.then(
+    // Nobody consumes the stream until its turn; keep a late error from crashing us.
+    ({ stream }) => stream.on("error", debug),
+    (error) => debug("prefetch failed for %s: %s", next.title, error?.message),
+  );
+};
+
+// A failed prefetch falls back to a fresh stream.
+const openTrackStream = async (track) => {
+  if (track.prefetch) {
+    try {
+      return await track.prefetch;
+    } catch (error) {
+      debug("prefetch unusable, restarting stream: %s", error?.message);
+    }
+  }
+
+  return streamWithYtDlp(track.url);
+};
+
+const clearTracks = (queue) => {
+  for (const track of queue.tracks) {
+    track.prefetch?.then(
+      ({ stream }) => stream.destroy(),
+      () => {},
+    );
+  }
+  queue.tracks = [];
+};
 
 const CONNECT_READY_TIMEOUT_MS = 20_000;
 const RECONNECT_TIMEOUT_MS = 5_000;
@@ -532,7 +593,7 @@ const cleanupQueue = (guildId) => {
     return;
   }
 
-  queue.tracks = [];
+  clearTracks(queue);
   queue.currentTrack = null;
 
   if (queue.connection) {
@@ -567,7 +628,7 @@ const processQueue = async (queue) => {
     }
 
     queue.currentTrack = nextTrack;
-    const stream = await streamWithYtDlp(nextTrack.url);
+    const stream = await openTrackStream(nextTrack);
     const resource = createAudioResource(stream.stream, {
       inputType: stream.type,
       inlineVolume: true,
@@ -575,6 +636,9 @@ const processQueue = async (queue) => {
     });
 
     resource.volume?.setVolume(queue.volume);
+    // Volume control re-encodes, and libopus's default (~99kbps) loses detail.
+    // prism's setBitrate caps at 128k, so set it on the encoder itself.
+    resource.encoder?.encoder.setBitrate(OPUS_BITRATE);
     queue.lastResource = resource;
 
     queue.player.play(resource);
@@ -625,6 +689,7 @@ const createQueue = ({ guildId, textChannel, voiceChannelId }) => {
   };
 
   player.on(AudioPlayerStatus.Playing, async () => {
+    prefetchNext(queue);
     const currentTrack = queue.currentTrack;
     if (!currentTrack || queue.lastAnnouncedTrackUrl === currentTrack.url) {
       return;
@@ -819,6 +884,9 @@ const enqueue = async ({
   await ensureConnection(queue, voiceChannel);
 
   queue.tracks.push(...tracks);
+  if (queue.player.state.status === AudioPlayerStatus.Playing) {
+    prefetchNext(queue);
+  }
   processQueue(queue).catch((error) => {
     handleQueueError(queue, error, "failed to start playback");
   });
@@ -852,7 +920,7 @@ const stop = (guildId) => {
     throw new Error("Nothing is playing right now.");
   }
 
-  queue.tracks = [];
+  clearTracks(queue);
   queue.currentTrack = null;
   queue.player.stop(true);
   cleanupQueue(guildId);
