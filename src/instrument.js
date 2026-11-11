@@ -7,6 +7,8 @@ const createDebug = require("debug");
 Sentry.init({
   dsn:
     process.env.NODE_ENV === "production" ? process.env.SENTRY_DSN : undefined,
+  // Explicit, or logs and metrics carry no environment at all.
+  environment: process.env.APP_ENV || "production",
   release: process.env.GIT_SHA || undefined,
   tracesSampleRate: 1,
   integrations: [

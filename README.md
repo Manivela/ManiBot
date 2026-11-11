@@ -90,6 +90,7 @@ On the host (x86-64; at least 4 CPUs or lower `cpus` in `compose.yaml`):
    UPSTASH_REDIS_REST_TOKEN=
    MANIBOT_VOLUME_KEY=
    SENTRY_DSN=
+   APP_ENV=
    COMMAND_PREFIX=!
    ```
 2. `docker compose up -d`, then `docker compose logs -f bot` until `Bot is ready`.
