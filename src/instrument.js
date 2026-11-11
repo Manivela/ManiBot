@@ -1,5 +1,6 @@
 // Loaded before anything else so Sentry can instrument the modules that follow.
 require("dotenv").config();
+const { format } = require("node:util");
 const Sentry = require("@sentry/node");
 const createDebug = require("debug");
 
@@ -22,4 +23,5 @@ if (process.env.DEBUG === undefined) {
   createDebug.enable("*,-voiceGateway,-presenceUpdate,-utils:role");
 }
 createDebug.inspectOpts.hideDate = true;
-createDebug.log = (...args) => console.info(...args);
+// Formatted here: Sentry doesn't fill in %d/%s placeholders.
+createDebug.log = (...args) => console.info(format(...args));
