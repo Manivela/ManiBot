@@ -37,6 +37,31 @@ client.on("clientReady", async () => {
   console.log("------------Bot is ready------------");
 });
 
+// Sentry opens an issue, and emails, when these check-ins stop: host off,
+// Docker down, or Discord lost. Not on Fly, which is stopped every night.
+const HEARTBEAT_MINUTES = 5;
+const heartbeat = () => {
+  if (client.isReady()) {
+    Sentry.captureCheckIn(
+      { monitorSlug: "manibot", status: "ok" },
+      {
+        schedule: {
+          type: "interval",
+          value: HEARTBEAT_MINUTES,
+          unit: "minute",
+        },
+        checkinMargin: HEARTBEAT_MINUTES,
+        failureIssueThreshold: 2, // so a deploy's restart doesn't alert
+        recoveryThreshold: 1,
+      },
+    );
+  }
+};
+if (!process.env.FLY_APP_NAME) {
+  client.once("clientReady", heartbeat);
+  setInterval(heartbeat, HEARTBEAT_MINUTES * 60_000);
+}
+
 // A trace per message; otherwise the whole process shares one.
 const handleMessage = createMessageCreateHandler({ musicPlayer });
 client.on("messageCreate", (msg) =>

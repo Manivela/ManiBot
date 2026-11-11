@@ -108,7 +108,8 @@ commit). Logs: Sentry (below), or `docker compose logs --tail 100 bot`.
 
 With `SENTRY_DSN` set and `NODE_ENV=production`, the bot sends errors, logs (everything it
 prints, one `Playing …` line per track, a warning per failed command), a trace per `!play` and
-per track start, and its memory/CPU every minute.
+per track start, and its memory/CPU every minute. Off Fly it also checks in every 5 minutes;
+after two missed check-ins Sentry opens an issue and emails.
 
 ## CI deploy metadata
 
