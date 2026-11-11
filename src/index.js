@@ -90,7 +90,27 @@ client.on("raw", (packet) => {
 
 // Load persisted volume preferences before serving commands. hydrate never
 // rejects, but log-in proceeds regardless so storage issues can't block boot.
+// A client whose login failed can't log in again. A rejected token stays down
+// (it won't fix itself; Sentry has the error and the heartbeat goes quiet).
+// Anything else, like no network yet after a reboot, exits so Docker
+// restarts the bot.
+const LOGIN_RETRY_MINUTES = 2;
 musicPlayer
   .hydratePreferredVolumes()
   .catch((error) => debug("failed to hydrate volume preferences", error))
-  .finally(() => client.login(process.env.BOT_TOKEN));
+  .finally(() =>
+    client.login(process.env.BOT_TOKEN).catch((error) => {
+      Sentry.captureException(error);
+      if (error.code === "TokenInvalid") {
+        console.error(
+          "Discord rejected BOT_TOKEN; staying down until .env changes.",
+        );
+        return;
+      }
+      console.error(
+        `Discord login failed, restarting in ${LOGIN_RETRY_MINUTES} minutes:`,
+        error.message,
+      );
+      setTimeout(() => process.exit(1), LOGIN_RETRY_MINUTES * 60_000);
+    }),
+  );
