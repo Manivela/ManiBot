@@ -40,7 +40,10 @@ const runYtDlpSelfUpdate = () => {
 
       if (error) {
         if (error.code === "ENOENT") {
-          debug("yt-dlp binary not found at %s; skip scheduled update", YTDLP_BIN);
+          debug(
+            "yt-dlp binary not found at %s; skip scheduled update",
+            YTDLP_BIN,
+          );
           return;
         }
 
@@ -53,7 +56,9 @@ const runYtDlpSelfUpdate = () => {
 const startYtDlpScheduledUpdates = () => {
   const hours = parseIntervalHours();
   if (hours === null) {
-    debug("scheduled yt-dlp updates disabled (YTDLP_SCHEDULED_UPDATE_HOURS<=0)");
+    debug(
+      "scheduled yt-dlp updates disabled (YTDLP_SCHEDULED_UPDATE_HOURS<=0)",
+    );
     return;
   }
 

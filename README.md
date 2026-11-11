@@ -160,8 +160,9 @@ Edit those `cron` lines if you change hours (always convert **local → UTC** fo
 
 **Setup**
 
-1. In the GitHub repo: **Settings → Secrets and variables → Actions → New repository secret**  
-   - Name: `FLY_API_TOKEN`  
+1. In the GitHub repo: **Settings → Secrets and variables → Actions → New repository secret**
+
+   - Name: `FLY_API_TOKEN`
    - Value: a Fly token with permission to manage the app (same idea as CircleCI deploy).
 
 2. Optionally adjust **start** time in `fly-schedule-start.yml` (default wake **08:00 Turkey**).

@@ -156,11 +156,7 @@ const isTemporaryYoutubeMediaUrl = (value) =>
 const resolvePlaybackUrl = (entry) => {
   const id = typeof entry.id === "string" ? entry.id : null;
 
-  for (const candidate of [
-    entry.webpage_url,
-    entry.original_url,
-    entry.url,
-  ]) {
+  for (const candidate of [entry.webpage_url, entry.original_url, entry.url]) {
     if (typeof candidate !== "string" || !candidate.trim()) {
       continue;
     }
@@ -1026,7 +1022,11 @@ const resolveTracks = async (query, requestedBy) => {
     data = JSON.parse(String(stdout).trim());
   } catch (error) {
     const stderr = error.stderr?.toString?.() || "";
-    if (/no results found|No matching entries|did not match any videos/i.test(stderr)) {
+    if (
+      /no results found|No matching entries|did not match any videos/i.test(
+        stderr,
+      )
+    ) {
       throw new Error("No YouTube results found for that query.");
     }
 

@@ -78,9 +78,7 @@ describe("player volume persistence", () => {
     mockLoad.mockRejectedValue(new Error("boom"));
     const player = loadPlayer();
 
-    await expect(
-      player.hydratePreferredVolumes(),
-    ).resolves.toBeUndefined();
+    await expect(player.hydratePreferredVolumes()).resolves.toBeUndefined();
     expect(player.getVolume("guild-1")).toBe(50);
   });
 });
