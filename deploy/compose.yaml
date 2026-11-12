@@ -10,7 +10,7 @@ services:
     security_opt:
       - no-new-privileges:true
     volumes:
-      - audio-cache:/tmp/manibot-audio-cache # song cache, up to 5GB
+      - audio-cache:/tmp/manibot-audio-cache # song cache, up to 1GB
     mem_limit: 6g
     cpus: 4
     logging: &logging

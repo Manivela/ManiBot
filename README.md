@@ -37,7 +37,7 @@ Available commands:
 
 The bot joins the caller's voice channel as soon as `!play` arrives and stays 30 seconds after
 the queue ends. It leaves before the next song if nobody else is in the channel, and `!stop`
-makes it leave right away. Downloaded songs are cached on disk (up to 5 GB) and lookups in
+makes it leave right away. Downloaded songs are cached on disk (up to 1 GB) and lookups in
 memory, so repeats start instantly.
 
 `!version` shows app version and, when available, deploy metadata (`RELEASE_VERSION` and `GIT_SHA`).

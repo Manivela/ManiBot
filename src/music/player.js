@@ -258,7 +258,7 @@ const STREAM_BUFFER_BYTES = 16 * 1024 * 1024;
 const AUDIO_CACHE_DIR = join(tmpdir(), "manibot-audio-cache");
 const audioCachePath = (key) => join(AUDIO_CACHE_DIR, `${key}.audio`);
 const audioCache = createLru(
-  5 * 1024 ** 3,
+  1024 ** 3,
   (size) => size,
   (key) => rm(audioCachePath(key), { force: true }).catch(debug),
 );
