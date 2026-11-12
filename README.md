@@ -96,7 +96,7 @@ On the host (x86-64; at least 4 CPUs or lower `cpus` in `compose.yaml`):
 2. `docker compose up -d`, then `docker compose logs -f bot` until `Bot is ready`.
 
 On Windows, Docker Desktop must start on sign-in, and the bot runs only while a user is
-signed in.
+signed in. `deploy/run.bat`, placed next to `compose.yaml`, does step 2 on a double-click.
 
 Deploy: push to `main`; it is live within ~5 minutes of CI finishing (`!version` shows the
 commit). Logs: Sentry (below), or `docker compose logs --tail 100 bot`.
