@@ -98,10 +98,6 @@ On the host (x86-64; at least 4 CPUs or lower `cpus` in `compose.yaml`):
 On Windows, Docker Desktop must start on sign-in, and the bot runs only while a user is
 signed in.
 
-Moving off Fly: run `flyctl scale count 0 -a manibot` before starting the host with the same
-`BOT_TOKEN`, then remove the Fly deploy job and both Fly schedule workflows; otherwise two bots
-answer every command.
-
 Deploy: push to `main`; it is live within ~5 minutes of CI finishing (`!version` shows the
 commit). Logs: Sentry (below), or `docker compose logs --tail 100 bot`.
 
