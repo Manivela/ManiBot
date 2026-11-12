@@ -25,7 +25,6 @@ describe("Message Create Handler", () => {
       channel: { send, sendTyping: jest.fn(() => Promise.resolve()) },
       content,
       guild: { id: "guild-1" },
-      react: jest.fn(() => Promise.resolve()),
       member: {
         voice: voiceChannelId
           ? {
@@ -76,7 +75,7 @@ describe("Message Create Handler", () => {
     );
   });
 
-  it("acknowledges !play before the track has resolved", async () => {
+  it("shows typing on !play before the track has resolved", async () => {
     const musicPlayer = {
       enqueue: jest.fn(() => new Promise(() => {})), // yt-dlp still working
       getQueue: jest.fn(() => null),
@@ -87,12 +86,11 @@ describe("Message Create Handler", () => {
     handler(msg);
     await new Promise((resolve) => setImmediate(resolve));
 
-    expect(msg.react).toHaveBeenCalledWith("👀");
     expect(msg.channel.sendTyping).toHaveBeenCalled();
     expect(msg.channel.send).not.toHaveBeenCalled();
   });
 
-  it("still plays when the acknowledgement is not permitted", async () => {
+  it("still plays when typing is not permitted", async () => {
     const musicPlayer = {
       enqueue: jest.fn(() =>
         Promise.resolve({
@@ -105,7 +103,7 @@ describe("Message Create Handler", () => {
     };
     const handler = createMessageCreateHandler({ musicPlayer });
     const msg = createMessage({ content: "!play test" });
-    msg.react.mockRejectedValue(new Error("Missing Permissions"));
+    msg.channel.sendTyping.mockRejectedValue(new Error("Missing Permissions"));
 
     await handler(msg);
 

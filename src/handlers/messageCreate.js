@@ -198,9 +198,8 @@ const createMessageCreateHandler = ({
           }
 
           await Sentry.startSpan({ name: "!play", op: "command" }, async () => {
-            // Acknowledge now: the lookup takes seconds. Not awaited, so a missing
-            // permission can't block playback.
-            msg.react("👀").catch(debug);
+            // Typing while the lookup runs. Not awaited, so a missing permission
+            // can't block playback.
             msg.channel.sendTyping().catch(debug);
 
             const result = await musicPlayer.enqueue({
