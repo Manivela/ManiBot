@@ -3,7 +3,6 @@ const dns = require("node:dns");
 const { Client, GatewayIntentBits } = require("discord.js");
 const { presenceUpdateHandler } = require("./handlers/presenceUpdate");
 const { createMessageCreateHandler } = require("./handlers/messageCreate");
-// const { voiceStateUpdateHandler } = require("./handlers/voiceStateUpdate");
 const debug = require("debug")("main");
 const voiceGatewayDebug = require("debug")("voiceGateway");
 const Sentry = require("@sentry/node");
@@ -72,10 +71,6 @@ client.on("raw", (packet) => {
     `${packet.t} guild=${data.guild_id || "unknown"} channel=${data.channel_id || "null"} user=${data.user_id || "unknown"} session=${data.session_id ? "present" : "missing"}`,
   );
 });
-
-// client.on("voiceStateUpdate", (oldState, newState) => {
-//   voiceStateUpdateHandler(oldState, newState, client);
-// });
 
 // Load persisted volume preferences before serving commands. hydrate never
 // rejects, but log-in proceeds regardless so storage issues can't block boot.
