@@ -1,6 +1,5 @@
 #!/bin/sh
 # Refresh yt-dlp on container start when newer than the image-bundled build.
-# Fly machines keep running without redeploys; this picks up yt-dlp releases after restarts.
 # Set YTDLP_AUTO_UPDATE=0 to skip (use only the Dockerfile-pinned binary).
 
 if [ "${YTDLP_AUTO_UPDATE:-1}" != "0" ]; then
