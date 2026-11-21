@@ -3,6 +3,9 @@ const dns = require("node:dns");
 const { Client, GatewayIntentBits } = require("discord.js");
 const { presenceUpdateHandler } = require("./handlers/presenceUpdate");
 const { createMessageCreateHandler } = require("./handlers/messageCreate");
+const {
+  createInteractionCreateHandler,
+} = require("./handlers/interactionCreate");
 const debug = require("debug")("main");
 const voiceGatewayDebug = require("debug")("voiceGateway");
 const Sentry = require("@sentry/node");
@@ -54,6 +57,16 @@ if (!process.env.FLY_APP_NAME) {
 const handleMessage = createMessageCreateHandler({ musicPlayer });
 client.on("messageCreate", (msg) =>
   Sentry.startNewTrace(() => handleMessage(msg)),
+);
+
+// Button presses. A late or repeated acknowledgement rejects; don't let it
+// become an unhandled rejection.
+const handleInteraction = createInteractionCreateHandler({ musicPlayer });
+client.on("interactionCreate", (interaction) =>
+  Sentry.startNewTrace(() => handleInteraction(interaction)).catch((error) => {
+    debug(error);
+    Sentry.captureException(error);
+  }),
 );
 
 // Keeps the member this handler sets as the Sentry user out of other events.

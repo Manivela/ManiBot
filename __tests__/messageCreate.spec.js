@@ -7,6 +7,7 @@ const {
 describe("Message Create Handler", () => {
   const queueTrack = {
     title: "Test Song",
+    url: "https://www.youtube.com/watch?v=testsong123",
     durationLabel: "3:10",
   };
 
@@ -71,7 +72,7 @@ describe("Message Create Handler", () => {
       }),
     );
     expect(msg.channel.send).toHaveBeenCalledWith(
-      "Queued **Test Song** (3:10).",
+      "Queued **[Test Song](<https://www.youtube.com/watch?v=testsong123>)** (3:10).",
     );
   });
 
@@ -108,7 +109,7 @@ describe("Message Create Handler", () => {
     await handler(msg);
 
     expect(msg.channel.send).toHaveBeenCalledWith(
-      "Queued **Test Song** (3:10).",
+      "Queued **[Test Song](<https://www.youtube.com/watch?v=testsong123>)** (3:10).",
     );
   });
 
@@ -155,8 +156,10 @@ describe("Message Create Handler", () => {
 
     await handler(msg);
 
-    expect(musicPlayer.skip).toHaveBeenCalledWith("guild-1");
-    expect(msg.channel.send).toHaveBeenCalledWith("Skipped **Test Song**.");
+    expect(musicPlayer.skip).toHaveBeenCalledWith("guild-1", "tester");
+    expect(msg.channel.send).toHaveBeenCalledWith(
+      "Skipped **[Test Song](<https://www.youtube.com/watch?v=testsong123>)**.",
+    );
   });
 
   it("shows current volume", async () => {
@@ -207,6 +210,54 @@ describe("Message Create Handler", () => {
 
     expect(message).toContain("Now playing");
     expect(message).toContain("Next Song");
+  });
+
+  it("links queued titles, escaping brackets in them", () => {
+    const message = buildQueueMessage({
+      currentTrack: null,
+      tracks: [
+        {
+          title: "a-ha - Take On Me [4K]",
+          url: "https://youtu.be/x",
+          durationLabel: "3:45",
+        },
+      ],
+    });
+
+    expect(message).toBe(
+      "1. **[a-ha - Take On Me \\[4K\\]](<https://youtu.be/x>)** (3:45)",
+    );
+  });
+
+  it("drops the links when they'd push the queue past Discord's 2000 characters", () => {
+    const track = {
+      title: "t".repeat(100),
+      url: `https://soundcloud.com/${"a".repeat(60)}`, // 11 YouTube links still fit
+      durationLabel: "10:00",
+    };
+    const message = buildQueueMessage({
+      currentTrack: track,
+      tracks: Array(12).fill(track),
+    });
+
+    expect(message.length).toBeLessThanOrEqual(2000);
+    expect(message).not.toContain("](<");
+  });
+
+  it("toggles autoplay", async () => {
+    const musicPlayer = {
+      getQueue: jest.fn(() => ({ voiceChannelId: "voice-1" })),
+      toggleAutoplay: jest.fn(() => true),
+    };
+    const handler = createMessageCreateHandler({ musicPlayer });
+    const msg = createMessage({ content: "!autoplay" });
+
+    await handler(msg);
+
+    expect(musicPlayer.toggleAutoplay).toHaveBeenCalledWith("guild-1");
+    expect(msg.channel.send).toHaveBeenCalledWith(
+      expect.stringMatching(/^🔁 Autoplay on/),
+    );
   });
 
   it("returns the bot version", async () => {

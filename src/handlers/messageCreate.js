@@ -4,6 +4,7 @@ const { createHash } = require("crypto");
 const { existsSync, readFileSync } = require("fs");
 const { join } = require("path");
 const { version } = require("../../package.json");
+const { trackLink } = require("../utils/trackLink");
 
 const DEFAULT_PREFIX = process.env.COMMAND_PREFIX || "!";
 
@@ -11,6 +12,7 @@ const BUILD_FINGERPRINT_FILES = [
   "package-lock.json",
   "src/index.js",
   "src/handlers/messageCreate.js",
+  "src/handlers/interactionCreate.js",
   "src/music/player.js",
 ];
 
@@ -65,12 +67,13 @@ const buildVersionMessage = () => {
   return details.join("\n");
 };
 
-const buildQueueMessage = (queue) => {
+const buildQueueMessage = (queue, linked = true) => {
+  const label = (track) => (linked ? trackLink(track) : track.title);
   const entries = [];
 
   if (queue.currentTrack) {
     entries.push(
-      `▶️ Now playing: **${queue.currentTrack.title}** (${queue.currentTrack.durationLabel})`,
+      `▶️ Now playing: **${label(queue.currentTrack)}** (${queue.currentTrack.durationLabel})`,
     );
   }
 
@@ -80,7 +83,7 @@ const buildQueueMessage = (queue) => {
         .slice(0, 10)
         .map(
           (track, index) =>
-            `${index + 1}. **${track.title}** (${track.durationLabel})`,
+            `${index + 1}. **${label(track)}** (${track.durationLabel})`,
         ),
     );
   }
@@ -93,7 +96,11 @@ const buildQueueMessage = (queue) => {
     entries.push(`…and ${queue.tracks.length - 10} more track(s).`);
   }
 
-  return entries.join("\n");
+  const message = entries.join("\n");
+  // Eleven long titles with links can pass Discord's 2000-character cap.
+  return linked && message.length > 2000
+    ? buildQueueMessage(queue, false)
+    : message;
 };
 
 const ensureMemberInVoiceChannel = async (msg) => {
@@ -213,7 +220,7 @@ const createMessageCreateHandler = ({
             if (result.tracksAdded === 1) {
               if (result.started) {
                 await msg.channel.send(
-                  `Queued **${result.tracks[0].title}** (${result.tracks[0].durationLabel}).`,
+                  `Queued **${trackLink(result.tracks[0])}** (${result.tracks[0].durationLabel}).`,
                 );
               }
               return;
@@ -231,8 +238,11 @@ const createMessageCreateHandler = ({
             return;
           }
 
-          const skippedTrack = musicPlayer.skip(msg.guild.id);
-          await msg.channel.send(`Skipped **${skippedTrack.title}**.`);
+          const skippedTrack = musicPlayer.skip(
+            msg.guild.id,
+            msg.author.username,
+          );
+          await msg.channel.send(`Skipped **${trackLink(skippedTrack)}**.`);
           return;
         }
 
@@ -243,7 +253,7 @@ const createMessageCreateHandler = ({
             return;
           }
 
-          musicPlayer.stop(msg.guild.id);
+          musicPlayer.stop(msg.guild.id, msg.author.username);
           await msg.channel.send("Stopped playback and cleared the queue.");
           return;
         }
@@ -256,7 +266,7 @@ const createMessageCreateHandler = ({
           }
 
           const pausedTrack = musicPlayer.pause(msg.guild.id);
-          await msg.channel.send(`Paused **${pausedTrack.title}**.`);
+          await msg.channel.send(`Paused **${trackLink(pausedTrack)}**.`);
           return;
         }
 
@@ -268,7 +278,7 @@ const createMessageCreateHandler = ({
           }
 
           const resumedTrack = musicPlayer.resume(msg.guild.id);
-          await msg.channel.send(`Resumed **${resumedTrack.title}**.`);
+          await msg.channel.send(`Resumed **${trackLink(resumedTrack)}**.`);
           return;
         }
 
@@ -299,6 +309,22 @@ const createMessageCreateHandler = ({
           return;
         }
 
+        case "autoplay": {
+          const queue = musicPlayer.getQueue(msg.guild.id);
+          const canControlQueue = await ensureCanControlQueue(msg, queue);
+          if (!canControlQueue) {
+            return;
+          }
+
+          const enabled = musicPlayer.toggleAutoplay(msg.guild.id);
+          await msg.channel.send(
+            enabled
+              ? "🔁 Autoplay on: when the queue runs out I'll keep playing related songs."
+              : "Autoplay off.",
+          );
+          return;
+        }
+
         case "queue": {
           const queue = musicPlayer.getQueue(msg.guild.id);
           await msg.channel.send(
@@ -316,7 +342,7 @@ const createMessageCreateHandler = ({
           }
 
           await msg.channel.send(
-            `▶️ Now playing: **${currentTrack.title}** (${currentTrack.durationLabel})`,
+            `▶️ Now playing: **${trackLink(currentTrack)}** (${currentTrack.durationLabel})`,
           );
           return;
         }
@@ -339,6 +365,7 @@ const createMessageCreateHandler = ({
               `${prefix}pause`,
               `${prefix}resume`,
               `${prefix}volume <0-200>`,
+              `${prefix}autoplay`,
               `${prefix}queue`,
               `${prefix}nowplaying`,
               `${prefix}np`,

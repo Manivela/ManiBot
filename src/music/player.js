@@ -27,9 +27,11 @@ const {
   joinVoiceChannel,
 } = require("@discordjs/voice");
 const Sentry = require("@sentry/node");
+const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = require("discord.js");
 const debug = require("debug")("musicPlayer");
 const volumeStore = require("./volumeStore");
 const { createLru } = require("../utils/lru");
+const { trackLink } = require("../utils/trackLink");
 
 const YTDLP_METADATA_TIMEOUT_MS = 90_000;
 
@@ -111,7 +113,7 @@ const buildYtDlpArgs = (url, formatSelector, useCookies = false) => {
   return args;
 };
 
-const buildYtDlpMetadataArgs = (target) => {
+const buildYtDlpMetadataArgs = (target, extraArgs = []) => {
   const args = [
     ...buildJsRuntimeArgs(),
     "--dump-single-json",
@@ -129,7 +131,7 @@ const buildYtDlpMetadataArgs = (target) => {
     args.push("--proxy", process.env.YTDLP_PROXY);
   }
 
-  args.push(target);
+  args.push(...extraArgs, target);
   return args;
 };
 
@@ -226,11 +228,11 @@ const tracksFromYtDlpMetadata = (data) => {
   return single ? [single] : [];
 };
 
-const runYtDlpMetadataJson = (target) =>
+const runYtDlpMetadataJson = (target, extraArgs) =>
   new Promise((resolve, reject) => {
     execFile(
       YTDLP_BIN,
-      buildYtDlpMetadataArgs(target),
+      buildYtDlpMetadataArgs(target, extraArgs),
       {
         maxBuffer: 50 * 1024 * 1024,
         timeout: YTDLP_METADATA_TIMEOUT_MS,
@@ -592,6 +594,47 @@ const normalizeTrack = (track, requestedBy) => ({
   requestedBy,
 });
 
+const youtubeId = (url) =>
+  /(?:[?&]v=|youtu\.be\/|\/shorts\/|\/live\/)([\w-]{11})(?![\w-])/.exec(
+    url ?? "",
+  )?.[1] ?? null;
+
+const AUTOPLAY_HISTORY = 20;
+// More candidates than history, so some are always left unplayed.
+const AUTOPLAY_CANDIDATES = 25;
+
+// The next song from YouTube's Mix of the last one played, like its autoplay.
+// A failed lookup ends playback quietly, with no retry.
+const pickAutoplayTrack = async (queue) => {
+  const seed = queue.recentIds.at(-1);
+  if (!seed) {
+    return null;
+  }
+
+  try {
+    const stdout = await runYtDlpMetadataJson(
+      `https://www.youtube.com/watch?v=${seed}&list=RD${seed}`,
+      // Item 1 is the seed itself; uncapped, yt-dlp pages through ~1700.
+      ["--playlist-items", `2:${AUTOPLAY_CANDIDATES + 1}`],
+    );
+    const pick = tracksFromYtDlpMetadata(JSON.parse(String(stdout))).find(
+      // durationSeconds is null for a livestream, which would never end.
+      (fields) =>
+        fields.durationSeconds > 0 &&
+        !queue.recentIds.includes(youtubeId(fields.url)),
+    );
+    return pick
+      ? { ...normalizeTrack(pick, "autoplay"), autoplay: true }
+      : null;
+  } catch (error) {
+    debug("autoplay lookup failed: %s", error?.message);
+    Sentry.logger.warn(`autoplay lookup failed: ${error?.message}`, {
+      guild_id: queue.guildId,
+    });
+    return null;
+  }
+};
+
 // Start the next track's stream while the current one plays, if it fits in
 // STREAM_BUFFER_BYTES.
 const PREFETCH_MAX_SECONDS = 10 * 60;
@@ -739,6 +782,7 @@ const cleanupQueue = (guildId) => {
   clearTimeout(queue.idleTimer);
   clearTracks(queue);
   queue.currentTrack = null;
+  retireNowPlaying(queue);
 
   if (queue.connection) {
     queue.connection.destroy();
@@ -806,12 +850,24 @@ const processQueue = async (queue) => {
 
   try {
     nextTrack = queue.tracks.shift();
+    if (!nextTrack && queue.autoplay) {
+      const pick = await pickAutoplayTrack(queue);
+      if (getQueue(queue.guildId) !== queue) {
+        return; // !stop or a disconnect during the lookup
+      }
+      // A !play during the lookup goes first.
+      nextTrack = queue.tracks.shift() ?? (queue.autoplay ? pick : null);
+    }
     if (!nextTrack) {
       leaveWhenIdle(queue);
       return;
     }
 
     queue.currentTrack = nextTrack;
+    const id = youtubeId(nextTrack.url);
+    if (id) {
+      queue.recentIds = [...queue.recentIds, id].slice(-AUTOPLAY_HISTORY);
+    }
     // Its own transaction: the !play span has usually ended by now.
     const startedAt = Date.now();
     const stream = await Sentry.startSpan(
@@ -866,6 +922,101 @@ const processQueue = async (queue) => {
   }
 };
 
+// Buttons under the "Now playing" message; handlers/interactionCreate.js routes them.
+const buildControls = (queue) => {
+  const button = (id, emoji, style = ButtonStyle.Secondary) =>
+    new ButtonBuilder()
+      .setCustomId(`music:${id}`)
+      .setEmoji(emoji)
+      .setStyle(style);
+  const paused = queue.player.state.status === AudioPlayerStatus.Paused;
+  return [
+    new ActionRowBuilder().addComponents(
+      button("pause", paused ? "▶️" : "⏸️"),
+      button("skip", "⏭️"),
+      button("stop", "⏹️"),
+      button(
+        "autoplay",
+        "🔁",
+        queue.autoplay ? ButtonStyle.Success : ButtonStyle.Secondary,
+      ).setLabel("Autoplay"),
+    ),
+  ];
+};
+
+const nowPlayingLine = (track) =>
+  track.autoplay
+    ? `🔁 Autoplay: **${trackLink(track)}** (${track.durationLabel})`
+    : `▶️ Now playing: **${trackLink(track)}** (${track.durationLabel}) · requested by ${track.requestedBy}`;
+
+// queue.nowPlaying: the current song's message, the only one whose buttons work.
+const sweptChannels = new Set();
+
+// A previous process (restart, crash) never retired its last message's buttons.
+// Clears them the first time this process plays in that channel.
+// shortcut: checks the last 50 messages, enough unless the channel got busy in between.
+const sweepStaleControls = async (channel, keepId) => {
+  if (sweptChannels.has(channel.id)) {
+    return;
+  }
+  sweptChannels.add(channel.id);
+  const recent = await channel.messages.fetch({ limit: 50 });
+  const isStale = (message) =>
+    message.id !== keepId &&
+    message.author?.id === channel.client.user?.id &&
+    message.components?.some((row) =>
+      row.components?.some((c) => c.customId?.startsWith("music:")),
+    );
+  await Promise.all(
+    [...recent.values()]
+      .filter(isStale)
+      .map((message) => message.edit({ components: [] })),
+  );
+};
+
+const announce = (queue, track) => {
+  const record = { track, message: null, messageId: null, note: null };
+  const channel = queue.textChannel;
+  record.message = channel
+    .send({ content: nowPlayingLine(track), components: buildControls(queue) })
+    .then((message) => {
+      record.messageId = message?.id ?? null;
+      sweepStaleControls(channel, record.messageId).catch(debug);
+      return message;
+    });
+  queue.nowPlaying = record;
+  return record.message;
+};
+
+const editNowPlaying = (record, payload) =>
+  record?.message.then((message) => message?.edit(payload)).catch(debug);
+
+// Called when the song ends any way. Takes its buttons off; a skip or stop note
+// rewrites the line, so the channel reads as a history.
+const retireNowPlaying = (queue) => {
+  const record = queue.nowPlaying;
+  queue.nowPlaying = null;
+  editNowPlaying(
+    record,
+    record?.note
+      ? {
+          content: `${record.note}: **${trackLink(record.track)}** (${record.track.durationLabel})`,
+          components: [],
+        }
+      : { components: [] },
+  );
+};
+
+const refreshControls = (queue) =>
+  editNowPlaying(queue.nowPlaying, { components: buildControls(queue) });
+
+// Call before player.stop(), which fires Idle (and so the retire) synchronously.
+const noteEnd = (queue, note) => {
+  if (queue.nowPlaying?.track === queue.currentTrack) {
+    queue.nowPlaying.note = note;
+  }
+};
+
 const createQueue = ({ guildId, textChannel, voiceChannel }) => {
   const player = createAudioPlayer({
     behaviors: {
@@ -874,6 +1025,7 @@ const createQueue = ({ guildId, textChannel, voiceChannel }) => {
   });
 
   const queue = {
+    autoplay: false, // per voice session: resets when the bot leaves
     guildId,
     player,
     connection: null,
@@ -881,6 +1033,8 @@ const createQueue = ({ guildId, textChannel, voiceChannel }) => {
     isProcessing: false,
     lastAnnouncedTrackUrl: null,
     lastResource: null,
+    nowPlaying: null,
+    recentIds: [], // YouTube IDs: autoplay's seed and its don't-repeat list
     textChannel,
     tracks: [],
     volume: getPreferredVolume(guildId),
@@ -897,11 +1051,7 @@ const createQueue = ({ guildId, textChannel, voiceChannel }) => {
 
     queue.lastAnnouncedTrackUrl = currentTrack.url;
     if (queue.textChannel) {
-      await queue.textChannel
-        .send(
-          `▶️ Now playing: **${currentTrack.title}** (${currentTrack.durationLabel})`,
-        )
-        .catch(debug);
+      await announce(queue, currentTrack).catch(debug);
     }
   });
 
@@ -912,6 +1062,7 @@ const createQueue = ({ guildId, textChannel, voiceChannel }) => {
 
     queue.currentTrack = null;
     queue.lastAnnouncedTrackUrl = null;
+    retireNowPlaying(queue);
     Sentry.startNewTrace(() => processQueue(queue)).catch((error) => {
       handleQueueError(queue, error, "failed to advance the queue");
       leaveWhenIdle(queue);
@@ -920,6 +1071,7 @@ const createQueue = ({ guildId, textChannel, voiceChannel }) => {
 
   player.on("error", (error) => {
     queue.currentTrack = null;
+    retireNowPlaying(queue);
     handleQueueError(queue, error, "audio player emitted an error");
     processQueue(queue).catch((processError) => {
       handleQueueError(queue, processError, "failed after audio player error");
@@ -1151,19 +1303,21 @@ const ensureQueueHasTrack = (guildId) => {
   return queue;
 };
 
-const skip = (guildId) => {
+const skip = (guildId, by) => {
   const queue = ensureQueueHasTrack(guildId);
   const skippedTrack = queue.currentTrack;
+  noteEnd(queue, `⏭️ Skipped${by ? ` by ${by}` : ""}`);
   queue.player.stop(true);
   return skippedTrack;
 };
 
-const stop = (guildId) => {
+const stop = (guildId, by) => {
   const queue = getQueue(guildId);
   if (!queue) {
     throw new Error("Nothing is playing right now.");
   }
 
+  noteEnd(queue, `⏹️ Stopped${by ? ` by ${by}` : ""}`);
   clearTracks(queue);
   queue.currentTrack = null;
   queue.player.stop(true);
@@ -1173,13 +1327,43 @@ const stop = (guildId) => {
 const pause = (guildId) => {
   const queue = ensureQueueHasTrack(guildId);
   queue.player.pause(true);
+  refreshControls(queue);
   return queue.currentTrack;
 };
 
 const resume = (guildId) => {
   const queue = ensureQueueHasTrack(guildId);
   queue.player.unpause();
+  refreshControls(queue);
   return queue.currentTrack;
+};
+
+const togglePause = (guildId) =>
+  ensureQueueHasTrack(guildId).player.state.status === AudioPlayerStatus.Paused
+    ? resume(guildId)
+    : pause(guildId);
+
+// False for buttons on an old message: a past song, or from before a restart.
+const isCurrentControls = (guildId, messageId) =>
+  Boolean(messageId) && getQueue(guildId)?.nowPlaying?.messageId === messageId;
+
+const toggleAutoplay = (guildId) => {
+  const queue = getQueue(guildId);
+  if (!queue) {
+    throw new Error("Nothing is playing right now.");
+  }
+
+  queue.autoplay = !queue.autoplay;
+  // Turned on while lingering after the queue ran out: start now.
+  if (queue.autoplay && !queue.currentTrack && !queue.pendingEnqueues) {
+    clearTimeout(queue.idleTimer);
+    processQueue(queue).catch((error) => {
+      handleQueueError(queue, error, "failed to start autoplay");
+      leaveWhenIdle(queue);
+    });
+  }
+  refreshControls(queue);
+  return queue.autoplay;
 };
 
 const getNowPlaying = (guildId) => getQueue(guildId)?.currentTrack || null;
@@ -1223,9 +1407,12 @@ module.exports = {
   getQueue,
   getVolume,
   hydratePreferredVolumes,
+  isCurrentControls,
   pause,
   resume,
   setVolume,
   skip,
   stop,
+  toggleAutoplay,
+  togglePause,
 };

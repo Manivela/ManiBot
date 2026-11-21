@@ -65,6 +65,7 @@ jest.mock("child_process", () => ({
 jest.mock("@discordjs/voice", () => ({
   AudioPlayerStatus: {
     Idle: "idle",
+    Paused: "paused",
     Playing: "playing",
   },
   NoSubscriberBehavior: {
@@ -230,7 +231,10 @@ describe("music player", () => {
     );
     expect(mockCreateAudioResource).toHaveBeenCalled();
     expect(textChannel.send).toHaveBeenCalledWith(
-      "▶️ Now playing: **Track A** (3:21)",
+      expect.objectContaining({
+        content:
+          "▶️ Now playing: **[Track A](<https://youtube.com/watch?v=abc>)** (3:21) · requested by tester",
+      }),
     );
 
     player.cleanupQueue(guild.id);
@@ -902,6 +906,303 @@ describe("music player", () => {
       expect(fixtures.textChannel.send).toHaveBeenCalledWith(
         expect.stringMatching(/Everyone left/),
       );
+    });
+
+    describe("autoplay", () => {
+      const seedUrl = "https://www.youtube.com/watch?v=seedseedsee";
+      const entry = (id, title, duration = 180) => ({
+        id,
+        title,
+        url: `https://www.youtube.com/watch?v=${id}`,
+        duration,
+      });
+      let answerMix;
+      // A plain lookup finds the seed song; an autoplay lookup gets the Mix.
+      const mockMix = (mix, { hold = false } = {}) =>
+        mockExecFile.mockImplementation((cmd, args, options, callback) => {
+          const isMix = args.at(-1).includes("&list=RD");
+          const answer = () =>
+            mix instanceof Error && isMix
+              ? callback(mix)
+              : callback(
+                  null,
+                  JSON.stringify(
+                    isMix
+                      ? { entries: mix }
+                      : {
+                          title: "Seed Song",
+                          webpage_url: seedUrl,
+                          duration: 200,
+                        },
+                  ),
+                );
+          if (hold && isMix) {
+            answerMix = answer;
+          } else {
+            setImmediate(answer);
+          }
+        });
+      const playSeedThenEnd = async (
+        player,
+        fixtures,
+        { autoplay = true } = {},
+      ) => {
+        await play(player, fixtures, seedUrl);
+        await flush();
+        if (autoplay) {
+          expect(player.toggleAutoplay(fixtures.guild.id)).toBe(true);
+        }
+        endTrack(player, fixtures.guild);
+        await flush();
+      };
+      const playedTitles = () =>
+        mockCreateAudioResource.mock.calls.map(
+          ([, { metadata }]) => metadata.title,
+        );
+
+      it("is off by default", async () => {
+        mockMix([entry("nextnextnex", "Next Song")]);
+        const player = loadPlayer();
+        const fixtures = createFixtures();
+
+        await playSeedThenEnd(player, fixtures, { autoplay: false });
+
+        expect(mockExecFile).toHaveBeenCalledTimes(1);
+        expect(playedTitles()).toEqual(["Seed Song"]);
+        player.cleanupQueue(fixtures.guild.id);
+      });
+
+      it("plays the first unplayed, non-live song from the last song's Mix", async () => {
+        mockMix([
+          entry("seedseedsee", "Seed Song"),
+          entry("livestreamx", "Live Radio", null),
+          entry("nextnextnex", "Next Song"),
+        ]);
+        const player = loadPlayer();
+        const fixtures = createFixtures();
+
+        await playSeedThenEnd(player, fixtures);
+
+        expect(mockExecFile.mock.calls[1][1].slice(-3)).toEqual([
+          "--playlist-items",
+          "2:26",
+          "https://www.youtube.com/watch?v=seedseedsee&list=RDseedseedsee",
+        ]);
+        expect(playedTitles()).toEqual(["Seed Song", "Next Song"]);
+        expect(fixtures.textChannel.send).toHaveBeenCalledWith(
+          expect.objectContaining({
+            content:
+              "🔁 Autoplay: **[Next Song](<https://www.youtube.com/watch?v=nextnextnex>)** (3:00)",
+          }),
+        );
+        player.cleanupQueue(fixtures.guild.id);
+      });
+
+      it("starts right away when turned on after the queue ran out", async () => {
+        jest.useFakeTimers({ doNotFake: ["setImmediate", "nextTick"] });
+        mockMix([entry("nextnextnex", "Next Song")]);
+        const player = loadPlayer();
+        const fixtures = createFixtures();
+
+        await playSeedThenEnd(player, fixtures, { autoplay: false });
+        player.toggleAutoplay(fixtures.guild.id);
+        await flush();
+        jest.advanceTimersByTime(30_000); // the linger timer must not fire
+
+        expect(playedTitles()).toEqual(["Seed Song", "Next Song"]);
+        expect(player.getQueue(fixtures.guild.id)).not.toBeNull();
+        player.cleanupQueue(fixtures.guild.id);
+      });
+
+      it("drops the pick when !stop lands during the Mix lookup", async () => {
+        mockMix([entry("nextnextnex", "Next Song")], { hold: true });
+        const player = loadPlayer();
+        const fixtures = createFixtures();
+
+        await playSeedThenEnd(player, fixtures);
+        player.stop(fixtures.guild.id);
+        answerMix();
+        await flush();
+
+        expect(playedTitles()).toEqual(["Seed Song"]);
+        expect(player.getQueue(fixtures.guild.id)).toBeNull();
+      });
+
+      it("plays a !play that arrives during the Mix lookup first", async () => {
+        mockMix([entry("nextnextnex", "Next Song")], { hold: true });
+        const player = loadPlayer();
+        const fixtures = createFixtures();
+
+        await playSeedThenEnd(player, fixtures);
+        await play(player, fixtures, seedUrl);
+        answerMix();
+        await flush();
+
+        expect(playedTitles()).toEqual(["Seed Song", "Seed Song"]);
+        player.cleanupQueue(fixtures.guild.id);
+      });
+
+      it("ends quietly when the Mix lookup fails", async () => {
+        mockMix(new Error("yt-dlp exited with code 1"));
+        const player = loadPlayer();
+        const fixtures = createFixtures();
+
+        await playSeedThenEnd(player, fixtures);
+
+        expect(playedTitles()).toEqual(["Seed Song"]);
+        expect(fixtures.textChannel.send).not.toHaveBeenCalledWith(
+          expect.stringMatching(/failed/i),
+        );
+        player.cleanupQueue(fixtures.guild.id);
+      });
+    });
+
+    describe("now playing buttons", () => {
+      const song0 =
+        "**[Song 0](<https://music.youtube.com/watch?v=track0>)** (1:00)";
+      let messages;
+      const setup = async (prepare = () => {}) => {
+        mockTwoSongPlaylist();
+        const player = loadPlayer();
+        const fixtures = createFixtures();
+        prepare(fixtures);
+        messages = [];
+        fixtures.textChannel.send = jest.fn((payload) => {
+          const message = {
+            id: `msg-${messages.length}`,
+            payload,
+            edit: jest.fn(() => Promise.resolve()),
+          };
+          messages.push(message);
+          return Promise.resolve(message);
+        });
+        await play(
+          player,
+          fixtures,
+          "https://music.youtube.com/playlist?list=x",
+        );
+        await flush();
+        return { player, fixtures, queue: player.getQueue(fixtures.guild.id) };
+      };
+      const buttons = (payload) => payload.components[0].toJSON().components;
+
+      it("puts the controls on the current song's message only", async () => {
+        const { player, fixtures } = await setup();
+
+        expect(messages[0].payload.content).toBe(
+          `▶️ Now playing: ${song0} · requested by tester`,
+        );
+        expect(buttons(messages[0].payload).map((b) => b.custom_id)).toEqual([
+          "music:pause",
+          "music:skip",
+          "music:stop",
+          "music:autoplay",
+        ]);
+        expect(player.isCurrentControls(fixtures.guild.id, "msg-0")).toBe(true);
+
+        endTrack(player, fixtures.guild);
+        await flush();
+        expect(messages[0].edit).toHaveBeenCalledWith({ components: [] });
+        expect(player.isCurrentControls(fixtures.guild.id, "msg-0")).toBe(
+          false,
+        );
+        expect(player.isCurrentControls(fixtures.guild.id, "msg-1")).toBe(true);
+
+        player.cleanupQueue(fixtures.guild.id);
+        await flush();
+        expect(messages[1].edit).toHaveBeenCalledWith({ components: [] });
+      });
+
+      it("rewrites a skipped song's line with who skipped it", async () => {
+        const { player, fixtures, queue } = await setup();
+        // The real player fires Idle synchronously inside stop().
+        queue.player.stop.mockImplementation(() =>
+          queue.player.handlers.get("idle")(),
+        );
+
+        player.skip(fixtures.guild.id, "bob");
+        await flush();
+
+        expect(messages[0].edit).toHaveBeenCalledWith({
+          content: `⏭️ Skipped by bob: ${song0}`,
+          components: [],
+        });
+        expect(messages).toHaveLength(2);
+        player.cleanupQueue(fixtures.guild.id);
+      });
+
+      it("rewrites a stopped song's line with who stopped it", async () => {
+        const { player, fixtures } = await setup();
+
+        player.stop(fixtures.guild.id, "bob");
+        await flush();
+
+        expect(messages[0].edit).toHaveBeenCalledWith({
+          content: `⏹️ Stopped by bob: ${song0}`,
+          components: [],
+        });
+      });
+
+      it("clears buttons a previous run left behind, once per channel", async () => {
+        const inChannel = (id, authorId, customId) => ({
+          id,
+          author: { id: authorId },
+          components: [{ components: [{ customId }] }],
+          edit: jest.fn(() => Promise.resolve()),
+        });
+        const leftover = inChannel("old-1", "bot", "music:skip");
+        const untouched = [
+          inChannel("msg-0", "bot", "music:pause"), // this run's own
+          inChannel("old-2", "someone-else", "music:skip"),
+          inChannel("old-3", "bot", "poll:vote"),
+        ];
+        const { player, fixtures } = await setup((f) => {
+          f.textChannel.id = "text-1";
+          f.textChannel.client = { user: { id: "bot" } };
+          f.textChannel.messages = {
+            fetch: jest.fn(() =>
+              Promise.resolve(
+                new Map([leftover, ...untouched].map((m) => [m.id, m])),
+              ),
+            ),
+          };
+        });
+        await flush();
+
+        expect(leftover.edit).toHaveBeenCalledWith({ components: [] });
+        untouched.forEach((m) => expect(m.edit).not.toHaveBeenCalled());
+
+        endTrack(player, fixtures.guild);
+        await flush();
+        expect(messages).toHaveLength(2);
+        expect(fixtures.textChannel.messages.fetch).toHaveBeenCalledTimes(1);
+        player.cleanupQueue(fixtures.guild.id);
+      });
+
+      it("shows pause/resume and autoplay state on the buttons", async () => {
+        const { player, fixtures, queue } = await setup();
+        queue.player.pause.mockImplementation(() => {
+          queue.player.state.status = "paused";
+        });
+        queue.player.unpause.mockImplementation(() => {
+          queue.player.state.status = "playing";
+        });
+        const lastButtons = async () => {
+          await flush();
+          return buttons(messages[0].edit.mock.lastCall[0]);
+        };
+
+        player.togglePause(fixtures.guild.id);
+        expect((await lastButtons())[0].emoji.name).toBe("▶️");
+        player.togglePause(fixtures.guild.id);
+        expect((await lastButtons())[0].emoji.name).toBe("⏸️");
+        expect(queue.player.pause).toHaveBeenCalledTimes(1);
+        expect(queue.player.unpause).toHaveBeenCalledTimes(1);
+
+        player.toggleAutoplay(fixtures.guild.id);
+        expect((await lastButtons())[3].style).toBe(3); // ButtonStyle.Success
+        player.cleanupQueue(fixtures.guild.id);
+      });
     });
   });
 

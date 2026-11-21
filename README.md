@@ -16,6 +16,7 @@ Available commands:
 - `!pause`
 - `!resume`
 - `!volume <0-200>`
+- `!autoplay`
 - `!queue`
 - `!nowplaying`
 - `!commands`
@@ -25,6 +26,15 @@ The bot joins the caller's voice channel as soon as `!play` arrives and stays 30
 the queue ends. It leaves before the next song if nobody else is in the channel, and `!stop`
 makes it leave right away. Downloaded songs are cached on disk (up to 1 GB) and lookups in
 memory, so repeats start instantly.
+
+Each song gets a "Now playing" message with pause/resume, skip, stop and autoplay buttons for
+whoever is in the bot's voice channel. When the song ends the buttons go away, and a skip or
+stop rewrites the line to say who did it, so the channel reads as a history. Buttons a restart
+left behind are cleared the next time the bot plays in that channel (needs Read Message History).
+
+`!autoplay` toggles autoplay, which is off by default and resets when the bot leaves. When the
+queue runs out, the bot keeps playing songs from YouTube's Mix of the last song, skipping
+livestreams and the last 20 songs it played.
 
 `!version` shows app version and, when available, deploy metadata (`RELEASE_VERSION` and `GIT_SHA`).
 

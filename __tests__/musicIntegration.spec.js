@@ -156,10 +156,13 @@ describe("music command smoke integration", () => {
     await new Promise((resolve) => setImmediate(resolve));
 
     expect(playMessage.channel.send).toHaveBeenCalledWith(
-      "Queued **Smoke Song** (2:45).",
+      "Queued **[Smoke Song](<https://youtube.com/watch?v=smoke>)** (2:45).",
     );
     expect(playMessage.channel.send).toHaveBeenCalledWith(
-      "▶️ Now playing: **Smoke Song** (2:45)",
+      expect.objectContaining({
+        content:
+          "▶️ Now playing: **[Smoke Song](<https://youtube.com/watch?v=smoke>)** (2:45) · requested by tester",
+      }),
     );
 
     const nowPlayingMessage = createMessage({ content: "!nowplaying" });
@@ -167,7 +170,7 @@ describe("music command smoke integration", () => {
     await handler(nowPlayingMessage);
 
     expect(nowPlayingMessage.channel.send).toHaveBeenCalledWith(
-      "▶️ Now playing: **Smoke Song** (2:45)",
+      "▶️ Now playing: **[Smoke Song](<https://youtube.com/watch?v=smoke>)** (2:45)",
     );
 
     musicPlayer.cleanupQueue("guild-1");
