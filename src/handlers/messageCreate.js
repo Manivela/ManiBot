@@ -498,11 +498,16 @@ const createMessageCreateHandler = ({
             items
               .map(({ channel, role }) => `${channel} (${role.name})`)
               .join(", ");
+          const fresh = adopted.filter((item) => item.isNew);
+          const already = adopted.length - fresh.length;
           const lines = [
-            adopted.length
-              ? `Adopted ${adopted.length} game channel${adopted.length === 1 ? "" : "s"}: ${list(adopted)}. I'll keep seeing them, and their roles are in the picker.`
-              : "I found no game channels to adopt.",
+            fresh.length
+              ? `Adopted ${fresh.length} game channel${fresh.length === 1 ? "" : "s"}: ${list(fresh)}. I'll keep seeing them, and their roles are in the picker.`
+              : "No new game channels to adopt.",
           ];
+          if (already) {
+            lines.push(`${already} already adopted earlier, left as they are.`);
+          }
           if (skipped.length) {
             lines.push(
               `Skipped, named differently from the role that opens them: ${list(skipped)}. If one is a game channel, link it from \`${prefix}gamecheck\` when its game comes up.`,

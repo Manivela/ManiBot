@@ -240,10 +240,14 @@ const gameCheck = (guild, state) => {
     }
   }
   if (!issues.length) {
+    const seen = [...state.games.values()].some(
+      (game) => game.status === "linked",
+    );
     return [
       {
-        content:
-          "Every game I've seen so far has both roles and a channel linked.",
+        content: seen
+          ? "Every game I've seen so far has both roles and a channel linked."
+          : "Nobody has played a game I know yet, so there's nothing to check. Games show up here once someone plays them.",
       },
     ];
   }
@@ -314,18 +318,17 @@ const adoptChannels = async (guild, state) => {
       continue;
     }
 
-    if (
-      !channel.permissionOverwrites.cache
-        .get(me.id)
-        ?.allow.has(PermissionFlagsBits.ViewChannel)
-    ) {
+    const isNew = !channel.permissionOverwrites.cache
+      .get(me.id)
+      ?.allow.has(PermissionFlagsBits.ViewChannel);
+    if (isNew) {
       await channel.permissionOverwrites.edit(
         me,
         { ViewChannel: true },
         { reason: "Adopt game channel" },
       );
     }
-    adopted.push({ channel, role });
+    adopted.push({ channel, role, isNew });
     for (const [appId, game] of state.games) {
       if (
         game.status === "linked" &&

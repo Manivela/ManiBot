@@ -310,9 +310,9 @@ describe("games", () => {
 
       const result = await proposals.adoptChannels(guild, state);
 
-      expect(result.adopted.map(({ channel }) => channel.id)).toEqual([
-        "among-us",
-      ]);
+      expect(
+        result.adopted.map(({ channel, isNew }) => [channel.id, isNew]),
+      ).toEqual([["among-us", true]]);
       expect(
         guild.channels.cache.get("among-us").permissionOverwrites.edit,
       ).toHaveBeenCalledWith(
@@ -328,6 +328,29 @@ describe("games", () => {
       ).not.toHaveBeenCalled();
       expect(state.games.get("app-among").channelId).toBe("among-us");
       expect(result.sawEverything).toBe(false);
+    });
+
+    it("adopts a channel named differently when its role has an -ingame twin, or differs only in accents", async () => {
+      guild.roles.cache.set("lol", role("lol", "League of Legends"));
+      guild.roles.cache.set(
+        "lol-ingame",
+        role("lol-ingame", "League of Legends-ingame"),
+      );
+      guild.roles.cache.set("sat", role("sat", "Satisfactory"));
+      guild.channels.cache.set("lol-ch", hiddenChannel("lol-ch", "lol", "lol"));
+      guild.channels.cache.set(
+        "sat-ch",
+        hiddenChannel("sat-ch", "satışfactory", "sat"),
+      );
+
+      const result = await proposals.adoptChannels(guild, state);
+
+      expect(result.adopted.map(({ channel }) => channel.id)).toEqual(
+        expect.arrayContaining(["lol-ch", "sat-ch"]),
+      );
+      expect(result.skipped.map(({ channel }) => channel.id)).toEqual([
+        "music",
+      ]);
     });
 
     it("puts roles that open a game channel in the picker, but not other private channels' roles", () => {
@@ -464,6 +487,16 @@ describe("games", () => {
         expect.objectContaining({ components: [] }),
       );
     });
+  });
+
+  it("game check says so when no game has been seen yet", () => {
+    for (const appId of [...state.games.keys()]) {
+      state.games.delete(appId);
+    }
+
+    const [message] = proposals.gameCheck(guild, state);
+
+    expect(message.content).toContain("Nobody has played a game I know yet");
   });
 
   it("game check lists games missing a role or channel", () => {

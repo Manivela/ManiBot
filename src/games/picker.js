@@ -26,11 +26,20 @@ const canHandOut = (role) =>
   role.id !== role.guild.id &&
   role.permissions.bitfield === 0n;
 
-const squash = (name) => name.toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+// Case, spacing, punctuation and accents don't count: #satışfactory matches
+// "Satisfactory" (ı has no accent to strip, so it's mapped by hand).
+const squash = (name) =>
+  name
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .replace(/ı/g, "i")
+    .replace(/[^\p{L}\p{N}]/gu, "");
 
-// A text channel hidden from @everyone and opened by a no-permission role
-// named like it (#among-us ↔ "Among Us") is that role's game channel. The name
-// check keeps other private channels' roles out of the picker.
+// A text channel hidden from @everyone and opened by a no-permission game role
+// is that role's game channel. A game role is one named like the channel
+// (#among-us ↔ "Among Us") or one with an "-ingame" twin (#lol ↔ "League of
+// Legends"); other private channels' roles stay out of the picker.
 const channelGameRole = (guild, channel) => {
   const overwrites = channel?.permissionOverwrites?.cache;
   if (
@@ -39,11 +48,15 @@ const channelGameRole = (guild, channel) => {
   ) {
     return undefined;
   }
+  const hasTwin = (role) =>
+    guild.roles.cache.some((other) => other.name === `${role.name}-ingame`);
   return overwrites
     .filter((o) => o.allow.has(PermissionFlagsBits.ViewChannel))
     .map((o) => guild.roles.cache.get(o.id))
     .find(
-      (role) => canHandOut(role) && squash(role.name) === squash(channel.name),
+      (role) =>
+        canHandOut(role) &&
+        (squash(role.name) === squash(channel.name) || hasTwin(role)),
     );
 };
 
