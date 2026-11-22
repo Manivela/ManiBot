@@ -11,53 +11,13 @@
 
 const Sentry = require("@sentry/node");
 const debug = require("debug")("volumeStore");
+const { isEnabled, runCommand } = require("../utils/upstash");
 
 const DEFAULT_HASH_KEY = "manibot:volumes";
 
-// Cap each request so a connection that opens but never responds can't stall
-// startup (hydrate runs before login). TimeoutError is caught like any failure.
-const REQUEST_TIMEOUT_MS = 5_000;
-
-// Env is read on each call (not cached at module load) so tests can toggle
-// configuration without juggling module resets.
 const getConfig = () => ({
-  url: process.env.UPSTASH_REDIS_REST_URL,
-  token: process.env.UPSTASH_REDIS_REST_TOKEN,
   key: process.env.MANIBOT_VOLUME_KEY || DEFAULT_HASH_KEY,
 });
-
-const isEnabled = () => {
-  const { url, token } = getConfig();
-  return Boolean(url && token);
-};
-
-// Run a single Redis command via the Upstash REST API. The base URL receives a
-// POST whose body is a JSON array: [command, ...args]. Success → { result },
-// failure → { error }.
-const runCommand = async (command) => {
-  const { url, token } = getConfig();
-
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(command),
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-  });
-
-  if (!response.ok) {
-    throw new Error(`Upstash request failed with status ${response.status}`);
-  }
-
-  const payload = await response.json();
-  if (payload && payload.error) {
-    throw new Error(`Upstash error: ${payload.error}`);
-  }
-
-  return payload ? payload.result : undefined;
-};
 
 // HGETALL returns a flat [field, value, field, value, ...] array over the REST
 // API. Some clients hand back a plain object instead, so tolerate both. Only

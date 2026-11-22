@@ -1,9 +1,20 @@
 const { MessageFlags } = require("discord.js");
+const { handleRolesInteraction } = require("../games/picker");
+const { handleGameInteraction } = require("../games/proposals");
 
-// The buttons under each "Now playing" message (player.js buildControls).
+// The #roles picker, game proposals, and the buttons under each "Now playing"
+// message (player.js buildControls).
 const createInteractionCreateHandler =
   ({ musicPlayer }) =>
   async (interaction) => {
+    if (interaction.customId?.startsWith("roles:")) {
+      await handleRolesInteraction(interaction);
+      return;
+    }
+    if (interaction.customId?.startsWith("game:")) {
+      await handleGameInteraction(interaction);
+      return;
+    }
     if (!interaction.isButton() || !interaction.customId.startsWith("music:")) {
       return;
     }

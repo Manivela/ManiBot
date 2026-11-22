@@ -30,6 +30,7 @@ const Sentry = require("@sentry/node");
 const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = require("discord.js");
 const debug = require("debug")("musicPlayer");
 const volumeStore = require("./volumeStore");
+const { silent } = require("../utils/silent");
 const { createLru } = require("../utils/lru");
 const { trackLink } = require("../utils/trackLink");
 
@@ -768,7 +769,7 @@ const handleQueueError = (queue, error, message) => {
 
     const detail = `: ${detailText}`;
     queue.textChannel
-      .send(`Playback failed${detail}. Skipping to the next track.`)
+      .send(silent(`Playback failed${detail}. Skipping to the next track.`))
       .catch(debug);
   }
 };
@@ -835,7 +836,9 @@ const processQueue = async (queue) => {
     if (queue.tracks.length) {
       queue.textChannel
         ?.send(
-          "Everyone left the voice channel, so I stopped and cleared the queue.",
+          silent(
+            "Everyone left the voice channel, so I stopped and cleared the queue.",
+          ),
         )
         .catch(debug);
     }
@@ -978,7 +981,12 @@ const announce = (queue, track) => {
   const record = { track, message: null, messageId: null, note: null };
   const channel = queue.textChannel;
   record.message = channel
-    .send({ content: nowPlayingLine(track), components: buildControls(queue) })
+    .send(
+      silent({
+        content: nowPlayingLine(track),
+        components: buildControls(queue),
+      }),
+    )
     .then((message) => {
       record.messageId = message?.id ?? null;
       sweepStaleControls(channel, record.messageId).catch(debug);

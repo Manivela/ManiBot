@@ -904,7 +904,9 @@ describe("music player", () => {
       ).toHaveBeenCalled();
       expect(player.getQueue(fixtures.guild.id)).toBeNull();
       expect(fixtures.textChannel.send).toHaveBeenCalledWith(
-        expect.stringMatching(/Everyone left/),
+        expect.objectContaining({
+          content: expect.stringMatching(/Everyone left/),
+        }),
       );
     });
 
@@ -1051,7 +1053,9 @@ describe("music player", () => {
 
         expect(playedTitles()).toEqual(["Seed Song"]);
         expect(fixtures.textChannel.send).not.toHaveBeenCalledWith(
-          expect.stringMatching(/failed/i),
+          expect.objectContaining({
+            content: expect.stringMatching(/failed/i),
+          }),
         );
         player.cleanupQueue(fixtures.guild.id);
       });

@@ -1,3 +1,4 @@
+const { MessageFlags } = require("discord.js");
 const {
   buildQueueMessage,
   buildVersionMessage,
@@ -43,7 +44,10 @@ describe("Message Create Handler", () => {
 
     await handler(msg);
 
-    expect(msg.channel.send).toHaveBeenCalledWith("pong");
+    expect(msg.channel.send).toHaveBeenCalledWith({
+      content: "pong",
+      flags: MessageFlags.SuppressNotifications,
+    });
   });
 
   it("queues a track from the caller's voice channel", async () => {
@@ -72,7 +76,10 @@ describe("Message Create Handler", () => {
       }),
     );
     expect(msg.channel.send).toHaveBeenCalledWith(
-      "Queued **[Test Song](<https://www.youtube.com/watch?v=testsong123>)** (3:10).",
+      expect.objectContaining({
+        content:
+          "Queued **[Test Song](<https://www.youtube.com/watch?v=testsong123>)** (3:10).",
+      }),
     );
   });
 
@@ -109,7 +116,10 @@ describe("Message Create Handler", () => {
     await handler(msg);
 
     expect(msg.channel.send).toHaveBeenCalledWith(
-      "Queued **[Test Song](<https://www.youtube.com/watch?v=testsong123>)** (3:10).",
+      expect.objectContaining({
+        content:
+          "Queued **[Test Song](<https://www.youtube.com/watch?v=testsong123>)** (3:10).",
+      }),
     );
   });
 
@@ -125,7 +135,7 @@ describe("Message Create Handler", () => {
 
     expect(musicPlayer.enqueue).not.toHaveBeenCalled();
     expect(msg.channel.send).toHaveBeenCalledWith(
-      "Join a voice channel first.",
+      expect.objectContaining({ content: "Join a voice channel first." }),
     );
   });
 
@@ -142,7 +152,9 @@ describe("Message Create Handler", () => {
     await handler(msg);
 
     expect(msg.channel.send).toHaveBeenCalledWith(
-      "Playback request was interrupted. Please try !play again.",
+      expect.objectContaining({
+        content: "Playback request was interrupted. Please try !play again.",
+      }),
     );
   });
 
@@ -158,7 +170,10 @@ describe("Message Create Handler", () => {
 
     expect(musicPlayer.skip).toHaveBeenCalledWith("guild-1", "tester");
     expect(msg.channel.send).toHaveBeenCalledWith(
-      "Skipped **[Test Song](<https://www.youtube.com/watch?v=testsong123>)**.",
+      expect.objectContaining({
+        content:
+          "Skipped **[Test Song](<https://www.youtube.com/watch?v=testsong123>)**.",
+      }),
     );
   });
 
@@ -173,7 +188,9 @@ describe("Message Create Handler", () => {
     await handler(msg);
 
     expect(musicPlayer.getVolume).toHaveBeenCalledWith("guild-1");
-    expect(msg.channel.send).toHaveBeenCalledWith("Current volume: **75%**.");
+    expect(msg.channel.send).toHaveBeenCalledWith(
+      expect.objectContaining({ content: "Current volume: **75%**." }),
+    );
   });
 
   it("sets volume", async () => {
@@ -187,7 +204,9 @@ describe("Message Create Handler", () => {
     await handler(msg);
 
     expect(musicPlayer.setVolume).toHaveBeenCalledWith("guild-1", 1.2);
-    expect(msg.channel.send).toHaveBeenCalledWith("Volume set to **120%**.");
+    expect(msg.channel.send).toHaveBeenCalledWith(
+      expect.objectContaining({ content: "Volume set to **120%**." }),
+    );
   });
 
   it("shows volume usage for invalid values", async () => {
@@ -199,7 +218,9 @@ describe("Message Create Handler", () => {
 
     await handler(msg);
 
-    expect(msg.channel.send).toHaveBeenCalledWith("Usage: !volume <0-200>");
+    expect(msg.channel.send).toHaveBeenCalledWith(
+      expect.objectContaining({ content: "Usage: !volume <0-200>" }),
+    );
   });
 
   it("renders the queue summary", () => {
@@ -256,7 +277,9 @@ describe("Message Create Handler", () => {
 
     expect(musicPlayer.toggleAutoplay).toHaveBeenCalledWith("guild-1");
     expect(msg.channel.send).toHaveBeenCalledWith(
-      expect.stringMatching(/^🔁 Autoplay on/),
+      expect.objectContaining({
+        content: expect.stringMatching(/^🔁 Autoplay on/),
+      }),
     );
   });
 
@@ -267,7 +290,9 @@ describe("Message Create Handler", () => {
 
     await handler(msg);
 
-    expect(msg.channel.send).toHaveBeenCalledWith(buildVersionMessage());
+    expect(msg.channel.send).toHaveBeenCalledWith(
+      expect.objectContaining({ content: buildVersionMessage() }),
+    );
   });
 
   it("includes build fingerprint in version output", () => {
@@ -285,13 +310,221 @@ describe("Message Create Handler", () => {
     await handler(msg);
 
     expect(msg.channel.send).toHaveBeenCalledWith(
-      expect.stringContaining("!play"),
+      expect.objectContaining({ content: expect.stringContaining("!play") }),
     );
     expect(msg.channel.send).toHaveBeenCalledWith(
-      expect.stringContaining("!volume <0-200>"),
+      expect.objectContaining({
+        content: expect.stringContaining("!volume <0-200>"),
+      }),
     );
     expect(msg.channel.send).toHaveBeenCalledWith(
-      expect.stringContaining("!version"),
+      expect.objectContaining({ content: expect.stringContaining("!version") }),
     );
+  });
+
+  describe("server setup", () => {
+    const { Collection } = require("discord.js");
+    const store = require("../src/games/store");
+
+    const setupMessage = (content, { canManageRoles = true } = {}) => {
+      const msg = createMessage({ content });
+      const dj = {
+        id: "dj",
+        name: "DJ",
+        editable: true,
+        managed: false,
+        permissions: { bitfield: 0n },
+      };
+      const mod = {
+        ...dj,
+        id: "mod",
+        name: "Mod",
+        permissions: { bitfield: 8n },
+      };
+      msg.guild = {
+        id: "setup-guild",
+        ownerId: "owner",
+        roles: {
+          cache: new Collection([
+            ["dj", dj],
+            ["mod", mod],
+          ]),
+        },
+      };
+      dj.guild = msg.guild;
+      mod.guild = msg.guild;
+      msg.author.id = "owner";
+      msg.channel.id = "bot-channel";
+      msg.member.permissions = { has: () => canManageRoles };
+      return msg;
+    };
+    const run = (msg) =>
+      createMessageCreateHandler({ musicPlayer: { getQueue: jest.fn() } })(msg);
+
+    it("refuses setup commands without Manage Roles", async () => {
+      const msg = setupMessage("!botchannel", { canManageRoles: false });
+
+      await run(msg);
+
+      expect(msg.channel.send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          content: "You need the Manage Roles permission for that.",
+        }),
+      );
+      const state = await store.getGuildState("setup-guild");
+      expect(state.config.botChannelId).toBeUndefined();
+    });
+
+    it("sets the bot channel and toggles picker extras, never roles with permissions", async () => {
+      await run(setupMessage("!botchannel"));
+      await run(setupMessage("!pickable dj"));
+      await run(setupMessage("!pickable Mod"));
+      const state = await store.getGuildState("setup-guild");
+      expect(state.config).toEqual({
+        botChannelId: "bot-channel",
+        extraRoleIds: ["dj"],
+      });
+
+      await run(setupMessage("!pickable DJ"));
+      expect(state.config.extraRoleIds).toEqual([]);
+    });
+
+    it("sets the music channel named from another channel, silently", async () => {
+      const msg = setupMessage("!musicchannel #music");
+      msg.guild.id = "music-setup-guild";
+      const music = {
+        id: "music-channel",
+        guild: msg.guild,
+        toString: () => "<#music-channel>",
+      };
+      msg.mentions = { channels: new Collection([["music-channel", music]]) };
+
+      await run(msg);
+
+      const state = await store.getGuildState("music-setup-guild");
+      expect(state.config.musicChannelId).toBe("music-channel");
+      expect(msg.channel.send.mock.calls[0][0]).toMatchObject({
+        content: expect.stringContaining("<#music-channel>"),
+        flags: MessageFlags.SuppressNotifications,
+      });
+    });
+  });
+
+  describe("music channel", () => {
+    const {
+      Collection,
+      PermissionFlagsBits,
+      PermissionsBitField,
+    } = require("discord.js");
+    const store = require("../src/games/store");
+
+    const createPlayer = () => ({
+      getQueue: jest.fn(() => null),
+      enqueue: jest.fn(() =>
+        Promise.resolve({
+          started: true,
+          tracks: [queueTrack],
+          tracksAdded: 1,
+        }),
+      ),
+    });
+
+    const playIn = async (guildId, channelId) => {
+      const dj = {
+        id: "dj",
+        name: "DJ",
+        editable: true,
+        managed: false,
+        permissions: { bitfield: 0n },
+      };
+      const musicChannel = {
+        id: "music",
+        toString: () => "<#music>",
+        permissionOverwrites: {
+          cache: new Collection([
+            [
+              "dj",
+              {
+                id: "dj",
+                allow: new PermissionsBitField(PermissionFlagsBits.ViewChannel),
+              },
+            ],
+          ]),
+        },
+      };
+      const msg = createMessage({ content: "!play some song" });
+      msg.guild = {
+        id: guildId,
+        channels: { cache: new Collection([["music", musicChannel]]) },
+        roles: { cache: new Collection([["dj", dj]]) },
+      };
+      dj.guild = msg.guild;
+      msg.channel.id = channelId;
+      msg.channel.send = jest.fn(() =>
+        Promise.resolve({ delete: jest.fn(() => Promise.resolve()) }),
+      );
+      msg.author.id = "user-1";
+      msg.author.toString = () => "<@user-1>";
+      msg.member.roles = {
+        cache: new Collection(),
+        add: jest.fn(() => Promise.resolve()),
+      };
+      msg.delete = jest.fn(() => Promise.resolve());
+      const state = await store.getGuildState(guildId);
+      store.setConfig(guildId, state, { musicChannelId: "music" });
+      return msg;
+    };
+
+    afterEach(() => jest.useRealTimers());
+
+    it("sends music commands elsewhere to the music channel, giving the role that opens it", async () => {
+      jest.useFakeTimers();
+      const msg = await playIn("music-guild", "general");
+      const musicPlayer = createPlayer();
+
+      await createMessageCreateHandler({ musicPlayer })(msg);
+
+      expect(musicPlayer.enqueue).not.toHaveBeenCalled();
+      expect(msg.delete).toHaveBeenCalled();
+      expect(msg.member.roles.add).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "dj" }),
+        expect.anything(),
+      );
+      expect(msg.channel.send.mock.calls[0][0].content).toBe(
+        "<@user-1>, music commands go in <#music>. I gave you **DJ** so you can see it.",
+      );
+      const reply = await msg.channel.send.mock.results[0].value;
+      jest.advanceTimersByTime(10_000);
+      expect(reply.delete).toHaveBeenCalled();
+    });
+
+    it("plays normally in the music channel", async () => {
+      const msg = await playIn("music-guild", "music");
+      const musicPlayer = createPlayer();
+
+      await createMessageCreateHandler({ musicPlayer })(msg);
+
+      expect(musicPlayer.enqueue).toHaveBeenCalled();
+      expect(msg.delete).not.toHaveBeenCalled();
+    });
+
+    it("plays anyway when the setting can't be read", async () => {
+      process.env.UPSTASH_REDIS_REST_URL = "https://example.upstash.io";
+      process.env.UPSTASH_REDIS_REST_TOKEN = "token";
+      global.fetch = jest.fn(() => Promise.reject(new Error("down")));
+      const msg = createMessage({ content: "!play some song" });
+      msg.guild = { id: "redis-down-guild" };
+      const musicPlayer = createPlayer();
+
+      try {
+        await createMessageCreateHandler({ musicPlayer })(msg);
+      } finally {
+        delete process.env.UPSTASH_REDIS_REST_URL;
+        delete process.env.UPSTASH_REDIS_REST_TOKEN;
+        delete global.fetch;
+      }
+
+      expect(musicPlayer.enqueue).toHaveBeenCalled();
+    });
   });
 });

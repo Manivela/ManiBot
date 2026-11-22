@@ -156,7 +156,10 @@ describe("music command smoke integration", () => {
     await new Promise((resolve) => setImmediate(resolve));
 
     expect(playMessage.channel.send).toHaveBeenCalledWith(
-      "Queued **[Smoke Song](<https://youtube.com/watch?v=smoke>)** (2:45).",
+      expect.objectContaining({
+        content:
+          "Queued **[Smoke Song](<https://youtube.com/watch?v=smoke>)** (2:45).",
+      }),
     );
     expect(playMessage.channel.send).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -170,7 +173,10 @@ describe("music command smoke integration", () => {
     await handler(nowPlayingMessage);
 
     expect(nowPlayingMessage.channel.send).toHaveBeenCalledWith(
-      "▶️ Now playing: **[Smoke Song](<https://youtube.com/watch?v=smoke>)** (2:45)",
+      expect.objectContaining({
+        content:
+          "▶️ Now playing: **[Smoke Song](<https://youtube.com/watch?v=smoke>)** (2:45)",
+      }),
     );
 
     musicPlayer.cleanupQueue("guild-1");
@@ -189,7 +195,9 @@ describe("music command smoke integration", () => {
     await handler(skipMessage);
 
     expect(skipMessage.channel.send).toHaveBeenCalledWith(
-      "Music playback is already active in another voice channel.",
+      expect.objectContaining({
+        content: "Music playback is already active in another voice channel.",
+      }),
     );
 
     musicPlayer.cleanupQueue("guild-1");

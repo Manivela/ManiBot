@@ -1,18 +1,30 @@
 const Sentry = require("@sentry/node");
 const debug = require("debug")("messageCreate");
+const { PermissionFlagsBits, escapeMarkdown } = require("discord.js");
 const { createHash } = require("crypto");
 const { existsSync, readFileSync } = require("fs");
 const { join } = require("path");
 const { version } = require("../../package.json");
+const { silent } = require("../utils/silent");
 const { trackLink } = require("../utils/trackLink");
+const store = require("../games/store");
+const { canHandOut, setUpPicker } = require("../games/picker");
+const { adoptChannels, gameCheck } = require("../games/proposals");
 
 const DEFAULT_PREFIX = process.env.COMMAND_PREFIX || "!";
+
+// Every reply goes out silent: no push notifications from the bot.
+const send = (msg, payload) => msg.channel.send(silent(payload));
 
 const BUILD_FINGERPRINT_FILES = [
   "package-lock.json",
   "src/index.js",
   "src/handlers/messageCreate.js",
   "src/handlers/interactionCreate.js",
+  "src/handlers/presenceUpdate.js",
+  "src/games/picker.js",
+  "src/games/proposals.js",
+  "src/games/store.js",
   "src/music/player.js",
 ];
 
@@ -108,7 +120,7 @@ const ensureMemberInVoiceChannel = async (msg) => {
     return msg.member.voice.channel;
   }
 
-  await msg.channel.send("Join a voice channel first.");
+  await send(msg, "Join a voice channel first.");
   return null;
 };
 
@@ -119,7 +131,8 @@ const ensureSameVoiceChannel = async (msg, queue) => {
   }
 
   if (queue && queue.voiceChannelId !== memberVoiceChannel.id) {
-    await msg.channel.send(
+    await send(
+      msg,
       "Music playback is already active in another voice channel.",
     );
     return null;
@@ -134,6 +147,64 @@ const ensureCanControlQueue = async (msg, queue) => {
   }
 
   return Boolean(await ensureSameVoiceChannel(msg, queue));
+};
+
+const ensureCanManageRoles = async (msg) => {
+  if (msg.member?.permissions.has(PermissionFlagsBits.ManageRoles)) {
+    return true;
+  }
+
+  await send(msg, "You need the Manage Roles permission for that.");
+  return false;
+};
+
+// Commands that start or steer playback; with a music channel set they only
+// work there.
+const MUSIC_CONTROL_COMMANDS = new Set([
+  "play",
+  "skip",
+  "stop",
+  "pause",
+  "resume",
+  "volume",
+  "autoplay",
+]);
+const REDIRECT_REPLY_MS = 10_000;
+
+// Elsewhere the command is deleted and answered with a short-lived pointer to
+// the music channel, and the member gets the role that opens it. Returns
+// whether it redirected.
+const redirectToMusicChannel = async (msg) => {
+  // Music mustn't depend on Redis: if the setting can't be read, play anyway.
+  const state = await store.getGuildState(msg.guild.id).catch(() => null);
+  const channelId = state?.config.musicChannelId;
+  const channel = channelId && msg.guild.channels.cache.get(channelId);
+  if (!channel || channel.id === msg.channel.id) {
+    return false;
+  }
+
+  const role = channel.permissionOverwrites.cache
+    .filter((o) => o.allow.has(PermissionFlagsBits.ViewChannel))
+    .map((o) => msg.guild.roles.cache.get(o.id))
+    .find(canHandOut);
+  let gaveRole = false;
+  if (role && !msg.member.roles.cache.has(role.id)) {
+    try {
+      await msg.member.roles.add(role, "Tried a music command");
+      store.setOptOut(msg.guild.id, state, msg.author.id, role.id, false);
+      gaveRole = true;
+    } catch (error) {
+      debug(error);
+    }
+  }
+
+  msg.delete().catch(debug); // needs Manage Messages
+  const reply = await send(msg, {
+    content: `${msg.author}, music commands go in ${channel}.${gaveRole ? ` I gave you **${escapeMarkdown(role.name)}** so you can see it.` : ""}`,
+    allowedMentions: { users: [msg.author.id] },
+  });
+  setTimeout(() => reply.delete().catch(debug), REDIRECT_REPLY_MS);
+  return true;
 };
 
 const getUserFacingErrorMessage = (error) => {
@@ -169,7 +240,7 @@ const createMessageCreateHandler = ({
 
     const content = msg.content.trim();
     if (content === "ping") {
-      await msg.channel.send("pong");
+      await send(msg, "pong");
       return;
     }
 
@@ -188,13 +259,18 @@ const createMessageCreateHandler = ({
     const command = commandName.toLowerCase();
 
     try {
+      if (
+        MUSIC_CONTROL_COMMANDS.has(command) &&
+        (await redirectToMusicChannel(msg))
+      ) {
+        return;
+      }
+
       switch (command) {
         case "play": {
           const query = args.join(" ").trim();
           if (!query) {
-            await msg.channel.send(
-              `Usage: ${prefix}play <youtube url or search>`,
-            );
+            await send(msg, `Usage: ${prefix}play <youtube url or search>`);
             return;
           }
 
@@ -219,14 +295,15 @@ const createMessageCreateHandler = ({
 
             if (result.tracksAdded === 1) {
               if (result.started) {
-                await msg.channel.send(
+                await send(
+                  msg,
                   `Queued **${trackLink(result.tracks[0])}** (${result.tracks[0].durationLabel}).`,
                 );
               }
               return;
             }
 
-            await msg.channel.send(`Queued ${result.tracksAdded} track(s).`);
+            await send(msg, `Queued ${result.tracksAdded} track(s).`);
           });
           return;
         }
@@ -242,7 +319,7 @@ const createMessageCreateHandler = ({
             msg.guild.id,
             msg.author.username,
           );
-          await msg.channel.send(`Skipped **${trackLink(skippedTrack)}**.`);
+          await send(msg, `Skipped **${trackLink(skippedTrack)}**.`);
           return;
         }
 
@@ -254,7 +331,7 @@ const createMessageCreateHandler = ({
           }
 
           musicPlayer.stop(msg.guild.id, msg.author.username);
-          await msg.channel.send("Stopped playback and cleared the queue.");
+          await send(msg, "Stopped playback and cleared the queue.");
           return;
         }
 
@@ -266,7 +343,7 @@ const createMessageCreateHandler = ({
           }
 
           const pausedTrack = musicPlayer.pause(msg.guild.id);
-          await msg.channel.send(`Paused **${trackLink(pausedTrack)}**.`);
+          await send(msg, `Paused **${trackLink(pausedTrack)}**.`);
           return;
         }
 
@@ -278,7 +355,7 @@ const createMessageCreateHandler = ({
           }
 
           const resumedTrack = musicPlayer.resume(msg.guild.id);
-          await msg.channel.send(`Resumed **${trackLink(resumedTrack)}**.`);
+          await send(msg, `Resumed **${trackLink(resumedTrack)}**.`);
           return;
         }
 
@@ -291,13 +368,13 @@ const createMessageCreateHandler = ({
 
           if (!args.length) {
             const currentVolume = musicPlayer.getVolume(msg.guild.id);
-            await msg.channel.send(`Current volume: **${currentVolume}%**.`);
+            await send(msg, `Current volume: **${currentVolume}%**.`);
             return;
           }
 
           const value = Number(args[0]);
           if (!Number.isFinite(value)) {
-            await msg.channel.send(`Usage: ${prefix}volume <0-200>`);
+            await send(msg, `Usage: ${prefix}volume <0-200>`);
             return;
           }
 
@@ -305,7 +382,7 @@ const createMessageCreateHandler = ({
             msg.guild.id,
             value / 100,
           );
-          await msg.channel.send(`Volume set to **${volumePercent}%**.`);
+          await send(msg, `Volume set to **${volumePercent}%**.`);
           return;
         }
 
@@ -317,7 +394,8 @@ const createMessageCreateHandler = ({
           }
 
           const enabled = musicPlayer.toggleAutoplay(msg.guild.id);
-          await msg.channel.send(
+          await send(
+            msg,
             enabled
               ? "🔁 Autoplay on: when the queue runs out I'll keep playing related songs."
               : "Autoplay off.",
@@ -327,7 +405,8 @@ const createMessageCreateHandler = ({
 
         case "queue": {
           const queue = musicPlayer.getQueue(msg.guild.id);
-          await msg.channel.send(
+          await send(
+            msg,
             buildQueueMessage(queue || { currentTrack: null, tracks: [] }),
           );
           return;
@@ -337,19 +416,163 @@ const createMessageCreateHandler = ({
         case "np": {
           const currentTrack = musicPlayer.getNowPlaying(msg.guild.id);
           if (!currentTrack) {
-            await msg.channel.send("Nothing is playing right now.");
+            await send(msg, "Nothing is playing right now.");
             return;
           }
 
-          await msg.channel.send(
+          await send(
+            msg,
             `▶️ Now playing: **${trackLink(currentTrack)}** (${currentTrack.durationLabel})`,
           );
           return;
         }
 
+        case "musicchannel": {
+          if (!(await ensureCanManageRoles(msg))) {
+            return;
+          }
+
+          // Named from elsewhere (the admin channel) so nothing shows in it.
+          const off = args[0]?.toLowerCase() === "off";
+          const mentioned = msg.mentions?.channels.first();
+          const target =
+            mentioned?.guild?.id === msg.guild.id ? mentioned : msg.channel;
+          const state = await store.getGuildState(msg.guild.id);
+          store.setConfig(msg.guild.id, state, {
+            musicChannelId: off ? undefined : target.id,
+          });
+          await send(msg, {
+            content: off
+              ? "Music commands work in any channel again."
+              : `Music commands now only work in ${target}. Elsewhere I'll delete them, point people there, and give them the role that opens it.`,
+          });
+          return;
+        }
+
+        case "botchannel": {
+          if (!(await ensureCanManageRoles(msg))) {
+            return;
+          }
+
+          const state = await store.getGuildState(msg.guild.id);
+          store.setConfig(msg.guild.id, state, {
+            botChannelId: msg.channel.id,
+          });
+          await send(msg, {
+            content: [
+              "Game proposals will come here. Keep this channel visible only to whoever approves them.",
+              `Next, from here: \`${prefix}rolepicker\` (I'll set up a #roles channel), \`${prefix}musicchannel #channel\` for your music channel, \`${prefix}pickable <role>\` for extra roles like DJ, and \`${prefix}gamecheck\` any time to find games missing a role or channel.`,
+            ].join("\n"),
+          });
+          return;
+        }
+
+        case "rolepicker": {
+          if (!(await ensureCanManageRoles(msg))) {
+            return;
+          }
+
+          const state = await store.getGuildState(msg.guild.id);
+          const channel = await setUpPicker(msg.guild, state);
+          if (channel.id === msg.channel.id) {
+            await msg.delete().catch(debug); // needs Manage Messages
+          } else {
+            await send(msg, {
+              content: `The role picker is ready in ${channel}.`,
+            });
+          }
+          return;
+        }
+
+        case "adopt": {
+          if (!(await ensureCanManageRoles(msg))) {
+            return;
+          }
+
+          const state = await store.getGuildState(msg.guild.id);
+          const { adopted, skipped, sawEverything } = await adoptChannels(
+            msg.guild,
+            state,
+          );
+          const list = (items) =>
+            items
+              .map(({ channel, role }) => `${channel} (${role.name})`)
+              .join(", ");
+          const lines = [
+            adopted.length
+              ? `Adopted ${adopted.length} game channel${adopted.length === 1 ? "" : "s"}: ${list(adopted)}. I'll keep seeing them, and their roles are in the picker.`
+              : "I found no game channels to adopt.",
+          ];
+          if (skipped.length) {
+            lines.push(
+              `Skipped, named differently from the role that opens them: ${list(skipped)}. If one is a game channel, link it from \`${prefix}gamecheck\` when its game comes up.`,
+            );
+          }
+          lines.push(
+            sawEverything
+              ? "You can take Administrator away from me now."
+              : "I only checked channels I can see. Give me Administrator, run this again, then take it away.",
+          );
+          // shortcut: one message, cut at Discord's 2000 characters; split it if a server has that many channels.
+          await send(msg, {
+            content: lines.join("\n").slice(0, 2000),
+            allowedMentions: { parse: [] },
+          });
+          return;
+        }
+
+        case "gamecheck": {
+          if (!(await ensureCanManageRoles(msg))) {
+            return;
+          }
+
+          const state = await store.getGuildState(msg.guild.id);
+          for (const message of gameCheck(msg.guild, state)) {
+            await send(msg, message);
+          }
+          return;
+        }
+
+        case "pickable": {
+          if (!(await ensureCanManageRoles(msg))) {
+            return;
+          }
+
+          const name = args.join(" ").trim().toLowerCase();
+          const role = msg.guild.roles.cache.find(
+            (r) => r.name.toLowerCase() === name,
+          );
+          const isOwner = msg.author.id === msg.guild.ownerId;
+          if (
+            !canHandOut(role) ||
+            (!isOwner && msg.member.roles.highest.comparePositionTo(role) <= 0)
+          ) {
+            await send(
+              msg,
+              `Usage: ${prefix}pickable <role name>, for a role with no permissions, below my role and yours.`,
+            );
+            return;
+          }
+
+          const state = await store.getGuildState(msg.guild.id);
+          const extras = new Set(state.config.extraRoleIds || []);
+          const added = !extras.has(role.id);
+          if (added) {
+            extras.add(role.id);
+          } else {
+            extras.delete(role.id);
+          }
+          store.setConfig(msg.guild.id, state, { extraRoleIds: [...extras] });
+          await send(msg, {
+            content: `**${escapeMarkdown(role.name)}** is ${added ? "now in" : "out of"} the role picker.`,
+          });
+          return;
+        }
+
         case "commands":
         case "help": {
-          await msg.channel.send(
+          await send(
+            msg,
             [
               "Commands:",
               "",
@@ -369,13 +592,21 @@ const createMessageCreateHandler = ({
               `${prefix}queue`,
               `${prefix}nowplaying`,
               `${prefix}np`,
+              "",
+              "Server setup (needs Manage Roles):",
+              `${prefix}botchannel: game proposals come to this channel (start here)`,
+              `${prefix}rolepicker: sets up a #roles channel with the role picker (hidden until it's ready)`,
+              `${prefix}pickable <role name>: adds or removes an extra role, like DJ, in the picker`,
+              `${prefix}gamecheck: lists games missing a role or channel`,
+              `${prefix}adopt: once, with Administrator: lets me see your existing game channels`,
+              `${prefix}musicchannel [#channel|off]: music commands only work in that channel (default: this one)`,
             ].join("\n"),
           );
           return;
         }
 
         case "version": {
-          await msg.channel.send(buildVersionMessage());
+          await send(msg, buildVersionMessage());
           return;
         }
 
@@ -388,7 +619,7 @@ const createMessageCreateHandler = ({
         command,
         guild_id: msg.guild.id,
       });
-      await msg.channel.send(getUserFacingErrorMessage(error));
+      await send(msg, getUserFacingErrorMessage(error));
     }
   };
 };

@@ -22,6 +22,8 @@ Available commands:
 - `!commands`
 - `!version`
 
+Server setup commands are under [Game roles](#game-roles).
+
 The bot joins the caller's voice channel as soon as `!play` arrives and stays 30 seconds after
 the queue ends. It leaves before the next song if nobody else is in the channel, and `!stop`
 makes it leave right away. Downloaded songs are cached on disk (up to 1 GB) and lookups in
@@ -65,6 +67,53 @@ app its **own** Upstash database, or point them at different hash keys with `MAN
 
 When the variables are unset the bot keeps its previous in-memory behaviour, and any Redis
 outage is logged and ignored — it never blocks the `!volume` command or startup.
+
+## Game roles
+
+When a member starts a game, the bot gives them two roles: the game's role (e.g. `VALORANT`),
+which opens its text channel and stays, and its in-game role (`VALORANT-ingame`), shown
+separately in the member list, which goes away when they stop. Games are tracked by Discord's
+application ID, so roles and channels can be renamed freely. The first time a game is seen,
+roles named exactly after it are linked automatically.
+
+Games with no roles yet are proposed: once 2 members have played one within 30 days (1 with
+`NODE_ENV=development`), the bot asks in the bot channel and waits. Create makes both roles
+(the in-game one coloured and shown separately) and a channel only the game role can see;
+"Roles only" skips the channel; "Link to existing…" attaches roles and a channel you already
+have; Ignore stops it asking. Only members with Manage Roles can answer.
+
+Run the setup commands from the bot channel: their replies are silent (no push notifications), and
+nothing shows up in the channels members use. Members pick or drop game roles themselves with the
+button `!rolepicker` posts. The picker offers every role the bot knows as a game: linked games, roles with an
+exact `-ingame` twin, and roles that open a game channel the bot can see. Dropping one
+sticks: the bot won't hand it back when they next play.
+
+Setup commands (Manage Roles):
+
+- `!botchannel`: proposals go to this channel; keep it private to whoever approves.
+- `!rolepicker`: sets up a `#roles` channel with the picker button, hidden from everyone until
+  it's ready and closed to posting. Run again, it hides that channel (wherever it's been moved or
+  renamed) while it swaps the button.
+- `!pickable <role name>`: adds or removes a non-game role (like DJ) in the picker. Only roles
+  with no permissions, below the bot's role and yours.
+- `!gamecheck`: lists games missing a role or channel (say a role named a bit differently from
+  the game), each with a button to link what's missing.
+- `!adopt`: run once while the bot has Administrator. Discord hides channels from the bot unless
+  it can see them, so hand-made game channels are invisible to it. It adds itself to every text
+  channel that is hidden from everyone and opened by a no-permission role named like it
+  (`#among-us` ↔ `Among Us`), then reports what it adopted and what it skipped. Those roles join
+  the picker, and games link to their channel when played. Take Administrator away afterwards.
+- `!musicchannel [#channel]`: music commands (`!play`, `!skip`, `!stop`, `!pause`, `!resume`, `!volume`,
+  `!autoplay`) only work in that channel (default: this one). Elsewhere the bot deletes them (with Manage Messages),
+  gives the member the role that opens the music channel (a role with no permissions), and
+  replies for 10 seconds. `!musicchannel off` lifts it.
+
+The bot needs Manage Roles and Manage Channels, and its role above every game role. State lives
+in the same Upstash Redis as the volume (one hash per server, `manibot:guild:<id>`); without
+Upstash it is kept in memory and lost on restart. If Redis is configured but unreachable, the
+bot hands out and proposes nothing until it can read it again. Stored per server: the game
+list, who played a game not set up yet (deleted once it's proposed, and after 30 days), and
+who dropped which game role.
 
 ## Self-hosting (Docker)
 
