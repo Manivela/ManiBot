@@ -90,7 +90,8 @@ sticks: the bot won't hand it back when they next play.
 
 Setup commands (Manage Roles):
 
-- `!botchannel`: proposals go to this channel; keep it private to whoever approves.
+- `!botchannel`: proposals go to this channel; keep it private to whoever approves. The bot also
+  says here when it comes up on a new commit, with a link to what changed.
 - `!rolepicker`: sets up a `#roles` channel with the picker button, hidden from everyone until
   it's ready and closed to posting. Run again, it hides that channel (wherever it's been moved or
   renamed) while it swaps the button.

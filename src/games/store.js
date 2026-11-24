@@ -1,6 +1,6 @@
 // Per-guild game state, in one Redis hash per guild (kept in memory after the
 // first read; memory only without Upstash). Fields:
-//   config              {"botChannelId", "extraRoleIds"}
+//   config              {"botChannelId", "extraRoleIds", "announcedSha"}
 //   game:<appId>        {"status": "proposed"|"linked"|"ignored", "name",
 //                        "roleId", "ingameRoleId", "channelId", "proposal"}
 //   players:<appId>     {"<userId>": lastSeenMs}, only for games not set up yet

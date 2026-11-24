@@ -11,6 +11,7 @@ const voiceGatewayDebug = require("debug")("voiceGateway");
 const Sentry = require("@sentry/node");
 const musicPlayer = require("./music/player");
 const { startYtDlpScheduledUpdates } = require("./music/ytDlpScheduler");
+const { announceDeploy } = require("./deployNotice");
 
 dns.setDefaultResultOrder("ipv4first");
 
@@ -37,6 +38,7 @@ client.on("clientReady", async () => {
     }),
   );
   console.log("------------Bot is ready------------");
+  await announceDeploy(client);
 });
 
 // A Sentry metric monitor alerts when this stops: host off, Docker down, or

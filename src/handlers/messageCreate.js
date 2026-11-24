@@ -609,7 +609,7 @@ const createMessageCreateHandler = ({
               `${prefix}np`,
               "",
               "Server setup (needs Manage Roles):",
-              `${prefix}botchannel: game proposals come to this channel (start here)`,
+              `${prefix}botchannel: game proposals and new-version notices come to this channel (start here)`,
               `${prefix}rolepicker: sets up a #roles channel with the role picker (hidden until it's ready)`,
               `${prefix}pickable <role name>: adds or removes an extra role, like DJ, in the picker`,
               `${prefix}propose: lists the games being played now; pick one to get its proposal here`,
