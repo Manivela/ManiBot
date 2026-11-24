@@ -9,7 +9,7 @@ const { silent } = require("../utils/silent");
 const { trackLink } = require("../utils/trackLink");
 const store = require("../games/store");
 const { canHandOut, setUpPicker } = require("../games/picker");
-const { adoptChannels, gameCheck } = require("../games/proposals");
+const { adoptChannels, gameCheck, proposeMenu } = require("../games/proposals");
 
 const DEFAULT_PREFIX = process.env.COMMAND_PREFIX || "!";
 
@@ -538,6 +538,16 @@ const createMessageCreateHandler = ({
           return;
         }
 
+        case "propose": {
+          if (!(await ensureCanManageRoles(msg))) {
+            return;
+          }
+
+          const state = await store.getGuildState(msg.guild.id);
+          await send(msg, proposeMenu(msg.guild, state));
+          return;
+        }
+
         case "pickable": {
           if (!(await ensureCanManageRoles(msg))) {
             return;
@@ -602,6 +612,7 @@ const createMessageCreateHandler = ({
               `${prefix}botchannel: game proposals come to this channel (start here)`,
               `${prefix}rolepicker: sets up a #roles channel with the role picker (hidden until it's ready)`,
               `${prefix}pickable <role name>: adds or removes an extra role, like DJ, in the picker`,
+              `${prefix}propose: lists the games being played now; pick one to get its proposal here`,
               `${prefix}gamecheck: lists games missing a role or channel`,
               `${prefix}adopt: once, with Administrator: lets me see your existing game channels`,
               `${prefix}musicchannel [#channel|off]: music commands only work in that channel (default: this one)`,

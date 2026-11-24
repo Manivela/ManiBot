@@ -489,6 +489,79 @@ describe("games", () => {
     });
   });
 
+  describe("proposing by hand", () => {
+    const playing = (memberId, ...games) =>
+      guild.presences.cache.set(memberId, {
+        member: { id: memberId, user: { bot: false } },
+        activities: games.map(([applicationId, name]) => ({
+          applicationId,
+          name,
+          type: 0,
+        })),
+      });
+    const pick = (appId, options) =>
+      interaction("game:propose", {
+        values: [appId],
+        channelId: "here",
+        message: { id: "menu-1" },
+        component: { options },
+      });
+
+    it("lists games played now that aren't set up, most played first", () => {
+      playing("a", ["app-osu", "osu!"], ["app-pal", "Palworld"]);
+      playing("b", ["app-hades", "Hades"]);
+      playing("c", ["app-hades", "Hades"]);
+
+      const menu = proposals.proposeMenu(guild, state);
+
+      expect(menu.components[0].components[0].toJSON().options).toEqual([
+        { label: "Hades", description: "2 playing now", value: "app-hades" },
+        { label: "Palworld", description: "1 playing now", value: "app-pal" },
+      ]);
+    });
+
+    it("says so when nothing is being played", () => {
+      playing("a", ["app-osu", "osu!"]);
+
+      expect(proposals.proposeMenu(guild, state).components).toBeUndefined();
+    });
+
+    it("turns the list into the proposal for the picked game", async () => {
+      const press = pick("app-hades", [
+        { label: "Hades", description: "2 playing now", value: "app-hades" },
+      ]);
+
+      await proposals.handleGameInteraction(press);
+
+      expect(state.games.get("app-hades")).toEqual({
+        status: "proposed",
+        name: "Hades",
+        proposal: { channelId: "here", messageId: "menu-1" },
+      });
+      const sent = press.update.mock.calls[0][0];
+      expect(sent.content).toContain("**Hades**");
+      expect(
+        sent.components[0].components.map((b) => b.toJSON().custom_id),
+      ).toEqual([
+        "game:create:app-hades",
+        "game:roles:app-hades",
+        "game:link:app-hades",
+        "game:ignore:app-hades",
+      ]);
+    });
+
+    it("leaves a game set up in the meantime as it is", async () => {
+      const press = pick("app-osu", [{ label: "osu!", value: "app-osu" }]);
+
+      await proposals.handleGameInteraction(press);
+
+      expect(state.games.get("app-osu").status).toBe("linked");
+      expect(press.update).toHaveBeenCalledWith(
+        expect.objectContaining({ components: [] }),
+      );
+    });
+  });
+
   it("game check says so when no game has been seen yet", () => {
     for (const appId of [...state.games.keys()]) {
       state.games.delete(appId);

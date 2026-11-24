@@ -3,6 +3,7 @@
 // creates its roles (and channel), links existing ones, or ignores it.
 const {
   ActionRowBuilder,
+  ActivityType,
   ButtonBuilder,
   ButtonStyle,
   ChannelSelectMenuBuilder,
@@ -10,6 +11,7 @@ const {
   MessageFlags,
   PermissionFlagsBits,
   RoleSelectMenuBuilder,
+  StringSelectMenuBuilder,
   escapeMarkdown,
 } = require("discord.js");
 const Sentry = require("@sentry/node");
@@ -45,6 +47,75 @@ const summary = (game) =>
     .filter(Boolean)
     .join(" · ") || "nothing yet";
 
+// `played` finishes the sentence "<game>: …".
+const proposalMessage = (appId, name, played) => ({
+  content: `🎮 **${escapeMarkdown(name)}**: ${played}. Set it up as a game?`,
+  components: [
+    new ActionRowBuilder().addComponents(
+      button(
+        `game:create:${appId}`,
+        "Create roles + channel",
+        ButtonStyle.Success,
+      ),
+      button(`game:roles:${appId}`, "Roles only", ButtonStyle.Primary),
+      button(`game:link:${appId}`, "Link to existing…", ButtonStyle.Secondary),
+      button(`game:ignore:${appId}`, "Ignore", ButtonStyle.Danger),
+    ),
+  ],
+  allowedMentions: NO_PINGS,
+});
+
+// `!propose`: the games members are playing right now that aren't set up,
+// as a list; picking one turns the list into that game's proposal.
+const proposeMenu = (guild, state) => {
+  const playing = new Map();
+  for (const presence of guild.presences.cache.values()) {
+    if (!presence.member || presence.member.user?.bot) {
+      continue;
+    }
+    for (const activity of presence.activities) {
+      const appId = activity.applicationId;
+      if (
+        appId &&
+        activity.type === ActivityType.Playing &&
+        state.games.get(appId)?.status !== "linked"
+      ) {
+        const entry = playing.get(appId) ?? {
+          name: activity.name,
+          ids: new Set(),
+        };
+        entry.ids.add(presence.member.id);
+        playing.set(appId, entry);
+      }
+    }
+  }
+  if (!playing.size) {
+    return {
+      content: "Nobody is playing a game that isn't set up yet.",
+    };
+  }
+  // A list holds 25 options: the most played ones.
+  const options = [...playing]
+    .sort(([, a], [, b]) => b.ids.size - a.ids.size)
+    .slice(0, 25)
+    .map(([appId, { name, ids }]) => ({
+      label: name.slice(0, 100),
+      description: `${ids.size} playing now`,
+      value: appId,
+    }));
+  return {
+    content: "Being played right now and not set up. Pick one to propose it:",
+    components: [
+      new ActionRowBuilder().addComponents(
+        new StringSelectMenuBuilder()
+          .setCustomId("game:propose")
+          .setPlaceholder("Game")
+          .addOptions(options),
+      ),
+    ],
+  };
+};
+
 // Called for every "Playing" activity of a game with no record yet.
 const notePlayer = async (guild, state, activity, member) => {
   const appId = activity.applicationId;
@@ -67,26 +138,13 @@ const notePlayer = async (guild, state, activity, member) => {
 
   busy.add(key);
   try {
-    const message = await channel.send({
-      content: `🎮 **${escapeMarkdown(activity.name)}**: ${count} member${count === 1 ? "" : "s"} played it in the last 30 days. Set it up as a game?`,
-      components: [
-        new ActionRowBuilder().addComponents(
-          button(
-            `game:create:${appId}`,
-            "Create roles + channel",
-            ButtonStyle.Success,
-          ),
-          button(`game:roles:${appId}`, "Roles only", ButtonStyle.Primary),
-          button(
-            `game:link:${appId}`,
-            "Link to existing…",
-            ButtonStyle.Secondary,
-          ),
-          button(`game:ignore:${appId}`, "Ignore", ButtonStyle.Danger),
-        ),
-      ],
-      allowedMentions: NO_PINGS,
-    });
+    const message = await channel.send(
+      proposalMessage(
+        appId,
+        activity.name,
+        `${count} member${count === 1 ? "" : "s"} played it in the last 30 days`,
+      ),
+    );
     store.setGame(guild.id, state, appId, {
       status: "proposed",
       name: activity.name,
@@ -364,7 +422,9 @@ const closeProposal = async (guild, game, content) => {
 };
 
 const handleGameInteraction = async (interaction) => {
-  const [, action, appId] = interaction.customId.split(":");
+  const [, action, target] = interaction.customId.split(":");
+  // The `!propose` list carries the game in its choice.
+  const appId = action === "propose" ? interaction.values[0] : target;
   const { guild, user } = interaction;
   if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageRoles)) {
     await interaction.reply({
@@ -411,6 +471,45 @@ const handleGameInteraction = async (interaction) => {
       guild,
       next,
       `🔗 **${name}** linked by ${user}: ${summary(next)}`,
+    );
+    return;
+  }
+
+  if (action === "propose") {
+    // The list may be older than the game's setup.
+    if (game?.status === "linked") {
+      await interaction.update({
+        content: `**${name}** is already set up: ${summary(game)}`,
+        components: [],
+        allowedMentions: NO_PINGS,
+      });
+      return;
+    }
+    const option = interaction.component.options.find((o) => o.value === appId);
+    const label = game?.name ?? option.label;
+    // Saved before anything is awaited, so the automatic proposal can't race it.
+    store.setGame(guild.id, state, appId, {
+      ...game,
+      status: "proposed",
+      name: label,
+      proposal: {
+        channelId: interaction.channelId,
+        messageId: interaction.message.id,
+      },
+    });
+    if (game?.proposal?.messageId !== interaction.message.id) {
+      await closeProposal(
+        guild,
+        game ?? {},
+        `🎮 **${name}** was proposed again by ${user}.`,
+      );
+    }
+    await interaction.update(
+      proposalMessage(
+        appId,
+        label,
+        `proposed by ${user}, ${option.description}`,
+      ),
     );
     return;
   }
@@ -479,5 +578,6 @@ module.exports = {
   gameCheck,
   handleGameInteraction,
   notePlayer,
+  proposeMenu,
   PROPOSAL_THRESHOLD,
 };

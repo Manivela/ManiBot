@@ -96,6 +96,8 @@ Setup commands (Manage Roles):
   renamed) while it swaps the button.
 - `!pickable <role name>`: adds or removes a non-game role (like DJ) in the picker. Only roles
   with no permissions, below the bot's role and yours.
+- `!propose`: lists the games members are playing right now that aren't set up (ignored ones
+  too). Pick one and the list becomes its proposal, in the channel you ran it in.
 - `!gamecheck`: lists games missing a role or channel (say a role named a bit differently from
   the game), each with a button to link what's missing.
 - `!adopt`: run once while the bot has Administrator. Discord hides channels from the bot unless
