@@ -5,6 +5,7 @@ const {
   createWriteStream,
   existsSync,
   mkdirSync,
+  readFileSync,
   readdirSync,
   rmSync,
   statSync,
@@ -267,11 +268,18 @@ const audioCache = createLru(
   (key) => rm(audioCachePath(key), { force: true }).catch(debug),
 );
 
+// What was playing when the last process stopped. Kept here because this
+// folder is the volume that outlives a container (deploy/compose.yaml).
+const HANDOFF_PATH = join(AUDIO_CACHE_DIR, "handoff.json");
+
 // Rebuild the index from disk, oldest first; drop leftover partial writes.
 try {
   readdirSync(AUDIO_CACHE_DIR)
     .flatMap((name) => {
       const path = join(AUDIO_CACHE_DIR, name);
+      if (path === HANDOFF_PATH) {
+        return [];
+      }
       if (!name.endsWith(".audio")) {
         rmSync(path, { force: true });
         return [];
@@ -888,6 +896,8 @@ const processQueue = async (queue) => {
     const pcm = new prism.FFmpeg({
       // prettier-ignore
       args: [
+        // A resumed track; before -i, so the skipped part bypasses loudnorm.
+        ...(nextTrack.startAt ? ["-ss", String(nextTrack.startAt)] : []),
         "-i", "-", "-analyzeduration", "0", "-loglevel", "0",
         "-af", LOUDNORM_FILTER, "-f", "s16le", "-ar", "48000", "-ac", "2",
       ],
@@ -1421,6 +1431,103 @@ const getVolume = (guildId) => {
   return Math.round(getPreferredVolume(guildId) * 100);
 };
 
+// A deploy recreates the container: the stopping process writes down what each
+// guild is playing and how far in, and the next one carries on from there.
+// shortcut: a paused song resumes playing and an idle queue isn't kept; carry them over if that bites.
+const HANDOFF_MAX_AGE_MS = 2 * 60_000; // a restart, not the next day
+
+const saveHandoff = () => {
+  const queues = [...guildQueues.values()]
+    .filter((queue) => queue.currentTrack)
+    .map((queue) => {
+      const current = queue.currentTrack;
+      // lastResource is still the previous song while this one starts.
+      const playedMs =
+        queue.lastResource?.metadata === current
+          ? queue.lastResource.playbackDuration
+          : 0;
+      return {
+        autoplay: queue.autoplay,
+        guildId: queue.guildId,
+        recentIds: queue.recentIds,
+        textChannelId: queue.textChannel?.id,
+        tracks: [
+          {
+            ...current,
+            // A live stream can't seek: it rejoins at its live edge.
+            startAt:
+              current.durationSeconds > 0
+                ? (current.startAt ?? 0) + playedMs / 1000
+                : 0,
+          },
+          ...queue.tracks,
+        ],
+        voiceChannelId: queue.voiceChannelId,
+        volume: queue.volume,
+      };
+    });
+  if (!queues.length) {
+    return;
+  }
+  mkdirSync(AUDIO_CACHE_DIR, { recursive: true });
+  writeFileSync(
+    HANDOFF_PATH,
+    // A prefetch is a Promise, which JSON would turn into a truthy {}.
+    JSON.stringify({ savedAt: Date.now(), queues }, (key, value) =>
+      key === "prefetch" ? undefined : value,
+    ),
+  );
+};
+
+const readHandoff = () => {
+  try {
+    return JSON.parse(readFileSync(HANDOFF_PATH, "utf8"));
+  } catch (error) {
+    if (error.code !== "ENOENT") {
+      debug("unreadable handoff: %s", error.message);
+    }
+    return null;
+  } finally {
+    rmSync(HANDOFF_PATH, { force: true }); // only ever picked up once
+  }
+};
+
+// Call once the client is ready, so guilds and voice states are cached.
+const restoreHandoff = async (client) => {
+  const saved = readHandoff();
+  if (!saved || !(Date.now() - saved.savedAt < HANDOFF_MAX_AGE_MS)) {
+    return;
+  }
+  await Promise.all(
+    saved.queues.map(async (state) => {
+      const guild = client.guilds.cache.get(state.guildId);
+      const voiceChannel = guild?.channels.cache.get(state.voiceChannelId);
+      if (!voiceChannel || getQueue(guild.id)) {
+        return;
+      }
+      const queue = createQueue({
+        guildId: guild.id,
+        textChannel: guild.channels.cache.get(state.textChannelId),
+        voiceChannel,
+      });
+      Object.assign(queue, {
+        autoplay: state.autoplay,
+        recentIds: state.recentIds,
+        tracks: state.tracks,
+        volume: state.volume,
+      });
+      try {
+        await ensureConnection(queue, voiceChannel);
+        await processQueue(queue);
+      } catch (error) {
+        debug("could not resume guild %s: %s", guild.id, error.message);
+        Sentry.captureException(error);
+        cleanupQueue(guild.id);
+      }
+    }),
+  );
+};
+
 module.exports = {
   cleanupQueue,
   enqueue,
@@ -1430,7 +1537,9 @@ module.exports = {
   hydratePreferredVolumes,
   isCurrentControls,
   pause,
+  restoreHandoff,
   resume,
+  saveHandoff,
   setVolume,
   skip,
   stop,

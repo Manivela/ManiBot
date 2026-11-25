@@ -30,6 +30,7 @@ const client = new Client({
 });
 
 client.on("clientReady", async () => {
+  musicPlayer.restoreHandoff(client).catch(debug);
   await Promise.all(
     client.guilds.cache.map(async (g) => {
       return g.roles
@@ -70,6 +71,17 @@ client.on("interactionCreate", (interaction) =>
     Sentry.captureException(error);
   }),
 );
+
+// A deploy stops the container with SIGTERM: hand the music to the next process.
+// Not on Fly, which stops with SIGINT and keeps no files.
+process.once("SIGTERM", () => {
+  try {
+    musicPlayer.saveHandoff();
+  } catch (error) {
+    console.error("could not save what was playing", error);
+  }
+  process.exit(0);
+});
 
 // Keeps the member this handler sets as the Sentry user out of other events.
 client.on("presenceUpdate", (...args) =>

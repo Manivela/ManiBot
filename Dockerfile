@@ -60,4 +60,5 @@ ARG RELEASE_VERSION=""
 ENV GIT_SHA=${GIT_SHA} RELEASE_VERSION=${RELEASE_VERSION}
 
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
-CMD [ "npm", "run", "start" ]
+# node directly, not npm: a deploy's SIGTERM must reach it (src/index.js saves what's playing).
+CMD [ "node", "src/index.js" ]

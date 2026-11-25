@@ -1,10 +1,12 @@
 const { EventEmitter } = require("events");
 const {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readdirSync,
   rmSync,
   statSync,
+  writeFileSync,
 } = require("fs");
 const { join } = require("path");
 const { PassThrough } = require("stream");
@@ -48,6 +50,8 @@ const mockExecFile = jest.fn();
 const mockCreateAudioResource = jest.fn((stream, options) => ({
   stream,
   options,
+  metadata: options.metadata,
+  playbackDuration: 0,
 }));
 const mockEntersState = jest.fn(() => Promise.resolve());
 const mockJoinVoiceChannel = jest.fn();
@@ -1229,6 +1233,99 @@ describe("music player", () => {
         expect((await lastButtons())[3].style).toBe(3); // ButtonStyle.Success
         player.cleanupQueue(fixtures.guild.id);
       });
+    });
+  });
+
+  describe("handing playback to the next process", () => {
+    const handoffPath = () =>
+      join(mockTmpDir, "manibot-audio-cache", "handoff.json");
+    const clientFor = ({ guild, textChannel, voiceChannel }) => {
+      textChannel.id = "text-1";
+      guild.channels = {
+        cache: new Map([
+          [voiceChannel.id, voiceChannel],
+          [textChannel.id, textChannel],
+        ]),
+      };
+      return { guilds: { cache: new Map([[guild.id, guild]]) } };
+    };
+
+    it("picks the queue up where the stopped process left it", async () => {
+      mockExecFile.mockImplementation((cmd, args, options, callback) => {
+        setImmediate(() =>
+          callback(
+            null,
+            JSON.stringify({
+              entries: ["Song A", "Song B"].map((title, i) => ({
+                title,
+                url: `https://www.youtube.com/watch?v=track${i}xxxx`,
+                duration: 200,
+              })),
+            }),
+          ),
+        );
+      });
+      const fixtures = createFixtures();
+      const client = clientFor(fixtures);
+      const before = loadPlayer();
+      await before.enqueue({
+        ...fixtures,
+        query: "https://www.youtube.com/playlist?list=x",
+        requestedBy: "tester",
+      });
+      await new Promise((resolve) => setImmediate(resolve));
+      before.getQueue("guild-1").lastResource.playbackDuration = 42_000;
+      before.saveHandoff();
+      before.cleanupQueue("guild-1");
+
+      jest.resetModules(); // the next process
+      jest.clearAllMocks();
+      const after = loadPlayer();
+      await after.restoreHandoff(client);
+
+      expect(mockJoinVoiceChannel).toHaveBeenCalledWith(
+        expect.objectContaining({ channelId: "voice-1", guildId: "guild-1" }),
+      );
+      expect(mockFFmpeg.mock.calls[0][0].args.slice(0, 4)).toEqual([
+        "-ss",
+        "42",
+        "-i",
+        "-",
+      ]);
+      expect(mockCreateAudioResource.mock.calls[0][1].metadata.title).toBe(
+        "Song A",
+      );
+      const queue = after.getQueue("guild-1");
+      expect(queue.tracks.map((track) => track.title)).toEqual(["Song B"]);
+      expect(queue.tracks[0].prefetch).not.toEqual({}); // not a dead Promise
+      expect(queue.textChannel).toBe(fixtures.textChannel);
+      expect(existsSync(handoffPath())).toBe(false); // picked up only once
+
+      after.cleanupQueue("guild-1");
+    });
+
+    it("ignores a handoff left from long ago", async () => {
+      const fixtures = createFixtures();
+      mkdirSync(join(mockTmpDir, "manibot-audio-cache"));
+      writeFileSync(
+        handoffPath(),
+        JSON.stringify({
+          savedAt: Date.now() - 60 * 60_000,
+          queues: [
+            {
+              guildId: "guild-1",
+              voiceChannelId: "voice-1",
+              tracks: [{ title: "Old", url: "https://youtu.be/oldoldoldol" }],
+            },
+          ],
+        }),
+      );
+      const player = loadPlayer();
+
+      await player.restoreHandoff(clientFor(fixtures));
+
+      expect(mockJoinVoiceChannel).not.toHaveBeenCalled();
+      expect(existsSync(handoffPath())).toBe(false);
     });
   });
 
