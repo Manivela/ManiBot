@@ -14,7 +14,8 @@ const {
 const { rename, rm } = require("fs/promises");
 const { setPriority, tmpdir } = require("os");
 const { join } = require("path");
-const { PassThrough } = require("stream");
+const { PassThrough, pipeline } = require("stream");
+const prism = require("prism-media");
 const STREAM_START_TIMEOUT_MS = 45_000;
 const {
   AudioPlayerStatus,
@@ -309,7 +310,6 @@ const streamWithYtDlp = (url, { lowPriority = false } = {}) =>
         utimes(path, now, now, () => {}); // recency survives a restart
         resolve({
           stream: createReadStream(path),
-          type: StreamType.Arbitrary,
           proc: null,
         });
         return;
@@ -446,7 +446,7 @@ const streamWithYtDlp = (url, { lowPriority = false } = {}) =>
       }
 
       didResolve = true;
-      resolve({ stream: audioStream, type: StreamType.Arbitrary, proc });
+      resolve({ stream: audioStream, proc });
     };
 
     const startAttempt = () => {
@@ -544,6 +544,9 @@ const guildQueues = new Map();
 const guildVolumePreferences = new Map();
 const DEFAULT_VOLUME = 0.5;
 const OPUS_BITRATE = 192_000;
+// -14 LUFS, the reference level YouTube and Spotify normalise to.
+// shortcut: single-pass loudnorm rides gain within a track; measure each cached file once if that pumps audibly.
+const LOUDNORM_FILTER = "loudnorm=I=-14:TP=-1.5:LRA=11";
 const MIN_VOLUME = 0;
 const MAX_VOLUME = 2;
 
@@ -881,8 +884,18 @@ const processQueue = async (queue) => {
         return opened;
       },
     );
-    const resource = createAudioResource(stream.stream, {
-      inputType: stream.type,
+    // The decode @discordjs/voice would run for StreamType.Arbitrary, plus loudnorm.
+    const pcm = new prism.FFmpeg({
+      // prettier-ignore
+      args: [
+        "-i", "-", "-analyzeduration", "0", "-loglevel", "0",
+        "-af", LOUDNORM_FILTER, "-f", "s16le", "-ar", "48000", "-ac", "2",
+      ],
+    });
+    // Errors reach the player through the resource's own pipeline.
+    pipeline(stream.stream, pcm, () => {});
+    const resource = createAudioResource(pcm, {
+      inputType: StreamType.Raw,
       inlineVolume: true,
       metadata: nextTrack,
     });

@@ -62,6 +62,20 @@ jest.mock("child_process", () => ({
   execFile: (...args) => mockExecFile(...args),
 }));
 
+// The loudness ffmpeg as a pass-through that remembers what was piped into it.
+const mockFFmpeg = jest.fn(() => {
+  const pcm = new PassThrough();
+  pcm.once("pipe", (source) => {
+    pcm.source = source;
+  });
+  return pcm;
+});
+jest.mock("prism-media", () => ({
+  FFmpeg: function FFmpeg(options) {
+    return mockFFmpeg(options);
+  },
+}));
+
 jest.mock("@discordjs/voice", () => ({
   AudioPlayerStatus: {
     Idle: "idle",
@@ -97,7 +111,7 @@ jest.mock("@discordjs/voice", () => ({
       unpause: jest.fn(),
     };
   }),
-  StreamType: { Arbitrary: "arbitrary" },
+  StreamType: { Raw: "raw" },
   createAudioResource: (...args) => mockCreateAudioResource(...args),
   entersState: (...args) => mockEntersState(...args),
   joinVoiceChannel: (...args) => mockJoinVoiceChannel(...args),
@@ -229,7 +243,13 @@ describe("music player", () => {
         guildId: "guild-1",
       }),
     );
-    expect(mockCreateAudioResource).toHaveBeenCalled();
+    expect(mockFFmpeg.mock.calls[0][0].args.join(" ")).toContain(
+      "-af loudnorm=I=-14:TP=-1.5:LRA=11",
+    );
+    expect(mockCreateAudioResource).toHaveBeenCalledWith(
+      mockFFmpeg.mock.results[0].value,
+      expect.objectContaining({ inputType: "raw" }),
+    );
     expect(textChannel.send).toHaveBeenCalledWith(
       expect.objectContaining({
         content:
@@ -311,7 +331,9 @@ describe("music player", () => {
       await flush();
 
       expect(spawnedUrls()).toHaveLength(2);
-      expect(mockCreateAudioResource.mock.calls[1][0]).toBe(prefetchedStream);
+      expect(mockCreateAudioResource.mock.calls[1][0].source).toBe(
+        prefetchedStream,
+      );
 
       player.cleanupQueue(guild.id);
     });

@@ -18,6 +18,13 @@ jest.mock("child_process", () => ({
   execFile: (...args) => mockExecFile(...args),
 }));
 
+// The loudness ffmpeg as a pass-through.
+jest.mock("prism-media", () => ({
+  FFmpeg: function FFmpeg() {
+    return new (jest.requireActual("stream").PassThrough)();
+  },
+}));
+
 jest.mock("@discordjs/voice", () => ({
   AudioPlayerStatus: {
     Idle: "idle",
@@ -50,7 +57,7 @@ jest.mock("@discordjs/voice", () => ({
       unpause: jest.fn(),
     };
   }),
-  StreamType: { Arbitrary: "arbitrary" },
+  StreamType: { Raw: "raw" },
   createAudioResource: (...args) => mockCreateAudioResource(...args),
   entersState: (...args) => mockEntersState(...args),
   joinVoiceChannel: (...args) => mockJoinVoiceChannel(...args),
